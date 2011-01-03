@@ -1,0 +1,6 @@
+Build
+MYMETA.yml
+_build/
+blib/
+*.c
+*.o
