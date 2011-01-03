@@ -58,8 +58,10 @@ Free($dev_ptr);
 
 
 # Finish by running the failure test. This, among other things, is supposed to
-# ensure that the documentation regarding the unspecified launch failure for
-# kernel invocations after a failed kernel launch is correct.
+# ensure that the documentation regarding the unspecified launch failure (for
+# kernel invocations after a failed kernel launch) is correct. If all the tests
+# after the first two fail, they should be modified to at least test
+# GetLastError and the documentation should be updated accordingly.
 
 # Run the kernel that is supposed to fail and see what we get:
 CUDA::Min::Tests::fail_test();
