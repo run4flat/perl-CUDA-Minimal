@@ -230,8 +230,8 @@ is important for benchmarking
 =item error checking
 
 L</GetLastError> and L</CheckForErrors> provide methods for checking on and
-getting the last errors; also, all the other function calls except
-L</ThreadSynchronize> croak when they encounter an error
+getting the last errors; also, all function calls except L</ThreadSynchronize>,
+L</GetLastError>, and L</CheckForErrors> croak when they encounter an error
 
 =back
 
@@ -592,39 +592,53 @@ C<cudaGetLastError>, which happens when any of these functions croak, or when
 you call L</GetLastError> or L</CheckForErrors>. With one exception, later
 checks for CUDA errors should be ok unless they actually had trouble. The
 exception is the C<unspecified launch failure>, which will cause all further
-kernel launches to fail with C<unspecified launch failure>. As far as I know,
+kernel launches to fail with C<unspecified launch failure>. You can still copy
+memory to and from the device, but kernel launches will fail. As far as I know,
 the only way to clear that error is to quit and restart your process.
 
 The best solution to this, in my opinion, is to make sure you have rock-solid
-input validation before invoking kernels. If your input to your kernels are
-good, and if they are invoked with good data, this should not be a problem.
+input validation before invoking kernels. If your kernels only know how to
+process arrays that have lengths that are powers of 2, make sure to indicate
+that in your documentation, and validate the length before actually invoking the
+kernel. If your input to your kernels are good, this should not be a problem.
 
 On the other hand, if you just can't find the bug in your invocation and need to
 ship your code, you might be able to solve this with a multi-threaded approach,
 or with forks. In that case you would have a parent process that spawns a child
 process to invoke the kernels. If a kernel invocation went bad, the child could
 pull all the important data off the device and save it in thread-shared host
-memory, and then die. If the child process ended prematurely, the parent process
-could attempt to recover and spawn a new child process. However, I do not have
-any multi-threaded tests in the test suite, so I can't even promise that a
-multi-threaded approach would even work. :-)
+memory, or to disk, and then die. If the child process ended prematurely, the
+parent process could attempt to recover and spawn a new child process. However,
+I do not have any multi-threaded tests in the test suite, so I can't even
+promise that a multi-threaded approach would work. Best of luck to you if you
+try this route, but I do not recommend it.
 
 =head1 EXPORTS
 
-This exports no functions by default. If you like, you can choose to export all
-functions. In other words, your code will look like this with no imports:
+This uses the standard L<Exporter> module, so it behaves in a fairly standard
+way. It exports no functions by default. If you like, you can choose to export
+all functions. In other words, your code will look like this with no imports:
 
  use CUDA::Min;
  my $dev_ptr = CUDA::Min::Malloc(CUDA::Min::Sizeof '20f');
+ ...
+ CUDA::Min::Free($dev_ptr);
 
 Or, you can choose to import all functions like this:
 
  use CUDA::Min ':all';
  my $dev_ptr = Malloc(Sizeof '20f');
+ ...
+ Free($dev_ptr);
 
-You can also import individual functions by specifying their names:
+You can also import individual functions by specifying their names. In that
+case, you must fully qualify any functions that you don't import, such as
+C<CUDA::Min::Sizeof> in this example:
 
  use CUDA::Min qw(Malloc Free);
+ my $dev_ptr = Malloc(CUDA::Min::Sizeof '20f');
+ ...
+ Free($dev_ptr);
 
 =head1 BUGS AND LIMITATIONS
 
