@@ -1,0 +1,14 @@
+Build.PL
+lib/CUDA/Min.pm
+lib/CUDA/Min.xs
+lib/CUDA/Min/Tests.pm
+lib/CUDA/Min/Tests.xs
+MANIFEST			This list of files
+mytest.pl
+ppport.h
+README
+t/00_load.t
+t/Memory.t
+t/SetSize.t
+t/Transfer.t
+t/z_kernel_invocations.t
