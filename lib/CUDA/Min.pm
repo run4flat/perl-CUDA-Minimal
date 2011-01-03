@@ -19,6 +19,7 @@ our @ISA = qw(Exporter);
 # will save memory.
 our %EXPORT_TAGS = ( 'all' => [ qw(
 		Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError SetSize
+		Offset CheckForErrors
 	) ],
 );
 
@@ -80,6 +81,33 @@ sub SetSize ($$;$) {
 	# If it's too long, trim it back (I believe this is efficient, but I'm not
 	# sure):
 	substr ($_[0], $new_length) = '';
+}
+
+# A little function that sorta does pointer arithmetic on device pointers:
+sub Offset ($$) {
+	my ($dev_ptr, $offset) = @_;
+	# Make sure they sent in a meaningful offset string, which should have the
+	# number of copies as the first part, and the pack type as the second:
+	if ($offset =~ /(\d+)\s*(\w)/) {
+		my ($N, $pack_type) = ($1, $2);
+		my $sizeof = length pack $pack_type, 0.45;
+		return $dev_ptr + $N * $sizeof;
+	}
+	else {
+		# Didn't so croak:
+		croak("Offset string ($offset) must have the number of digits "
+				. 'followed by the pack type');
+	}
+}
+
+# Checks for errors. Returns the undefined value if there were no errors. If
+# there were errors, it returns the error string, and also sets $@ to the same
+# error string.
+sub CheckForErrors () {
+	my $error = GetLastError();
+	return if $error =~ /no error/;
+	$@ = $error;
+	return $error;
 }
 
 require XSLoader;
@@ -306,6 +334,46 @@ something. The error looks like this:
 
  Unable to copy memory: <reason>
 
+=head2 Offset (device-pointer, offset-string)
+
+A somewhat slow and verbose but hopefully clear and forward-compatible method
+for computing a pointer offset. Suppose you want to transfer data starting from
+the fifth element of a device array of floats. You could hard-code like so:
+
+ Transfer($dev_ptr + 20 => $result);
+
+That uses a magic number. C<Offset> is here to hopefully make the meaning of
+your code clearer:
+
+ Transfer(Offset($dev_ptr => '5f') => $result)
+
+The offset string has two parts. The second part is the Perl L<pack> type (f
+for float, d for double, c for char, etc), and the first is the number of copies
+you want. They can be seperated by an optional space.
+
+Some examples should make this clearer:
+
+ # Get the address of the fifth element of a double array:
+ $dev_fifth = Offset($dev_ptr => '5d');
+ # Get the offset of the nth element of a char array, where
+ # the offset set is stored in the variable C<$offset>:
+ $dev_offset_ptr = Offset($dev_ptr => "$offset c");
+
+Notice how the space in the second example above clarifies the meaning and
+saves you from having to surround your offset variable in curly braces.
+
+=over
+
+=item Input
+
+the initial pointer (an integer) and the offset string
+
+=item Output
+
+a pointer value offset from the original by the desired amount
+
+=back
+
 =head2 SetSize (perl-scalar, new-length, [pack-type])
 
 A function that ensures that the perl scalar that you're using has exactly the
@@ -359,15 +427,70 @@ the threads are done.
 
 =head2 GetLastError
 
-This is a simple wrapper for C<cudaGetLastError>, but usng Perl error handling
-mechanisms.
+This is a simple wrapper for C<cudaGetLastError>. It returns a string describing
+the last error. If there were no errors, it returns the string 'no errors'. If
+the error is a recoverable one, it clears the error (see L</Unspecified launch
+failure>). For a slightly more idiomatic error checker, see L</CheckForErrors>.
 
-This function checks for CUDA errors and croaks with an explanation if it
-encounters one. Since all of the function calls in C<CUDA::Min> check for
-errors, this may seem unnecessary. It's only real use is for checking if a
-kernel launch failed. So, if any of the other C<CUDA::Min> functions are
-mysteriously failing, try putting a C<ReportErrors> right before those function
-calls to check for kernel launch trouble.
+=head2 CheckForErrors
+
+Checks for CUDA errors. Returns the undefined value if there are no errors.
+Otherwise, it returns the errors string. It also sets C<$@> with the error
+string, so you'll want to be sure to clear that if you find an error.
+
+Note that this does not actually croak with the error. It simply sets C<$@>.
+
+=over
+
+=item Input
+
+none
+
+=item Output
+
+a true or false value, depending on whether it did or did not find an error;
+also sets C<$@> with the error string
+
+=back
+
+A nice idiom for error checking is this:
+
+ if (CheckForErrors) {
+     # Error handling here
+     my $error_message = $@;
+     # you could decide to croak with the error if you like:
+     croak($@);
+     # or you might decide to try to handle the error yourself:
+     ... error handling code...
+     # in which case you should finish by clearing the Perl error:
+     $@ = '';
+ }
+
+Calling this function will clear CUDA's error status, if there was an error,
+but see L</Unspecified launch failure> below.
+
+=head1 Unspecified launch failure
+
+Normally CUDA's error status is reset to C<cudaSuccess> after calling
+C<cudaGetLastError>, making later checks for CUDA errors ok unless they actually
+had trouble. An important exception is the C<unspecified launch failure>, which
+is unrecoverable as far as I can tell. In other words, if you get an
+C<unspecified launch failure> in your code, any further kernel invocations
+will croak and indicate an unspecified launch failure.
+
+The best solution to this, in my opinion, is to make sure you have rock-solid
+input validation before invoking kernels. If your input to your kernels are
+good, and if they are invoked with good data, this should not be a problem.
+
+On the other hand, if you just can't find the bug in your invocation and need to
+ship your code, you might be able to solve this with a multi-threaded approach,
+or with forks. In that case you would have a parent process that spawns a child
+process to invoke the kernels. If a kernel invocation went bad, the child could
+pull all the important data off the device and save it in thread-shared host
+memory, and then die. If the child process ended prematurely, the parent process
+could attempt to recover and spawn a new child process. However, I do not have
+any multi-threaded tests in the test suite, so I can't even promise that a
+multi-threaded approach would even work. :-)
 
 =head1 EXPORTS
 

@@ -1,6 +1,6 @@
 # A collection of tests for the Transfer function
 
-use Test::More tests => 21;
+use Test::More tests => 23;
 use CUDA::Min ':all';
 use strict;
 use warnings;
@@ -17,6 +17,10 @@ my $dev_ptr = eval{ MallocFrom($host_array) };
 ok($@ eq '', 'MallocFrom works with reasonable data');
 $@ = '';
 
+# Make sure Offset works correctly:
+ok(Offset(0 => '4c') == 4, 'Offset 4c gives a value 4 from the original');
+ok(Offset(0 => '5l') == 20, 'Offset 5l gives a value 20 from the original');
+
 # Get a scalar into which I can pull from the device
 my $results = $host_array;
 
@@ -26,7 +30,7 @@ my $sizeof_float = length $test_val;
 
 my $offset = int rand $N_elements;
 # Test that Transfer only pulls a single value:
-Transfer($dev_ptr + $offset * $sizeof_float => $test_val);
+Transfer(Offset($dev_ptr => "$offset f") => $test_val);
 ok(unpack('f', $test_val) == $offset+1, "Position $offset has value " . ($offset+1));
 
 # Test that Transfer croaks when asked for more data than test_val can hold
@@ -42,7 +46,7 @@ like($@, qr/both are host arrays/
 $@ = '';
 
 # Test device-to-device transfers without a specified number of bytes:
-eval{ Transfer($dev_ptr => $dev_ptr + $sizeof_float) };
+eval{ Transfer($dev_ptr => Offset($dev_ptr => '1f')) };
 like($@, qr/device-to-device transfers/
 	, "Device-to-device transfers without a specified number of bytes croaks");
 $@ = '';
@@ -65,15 +69,15 @@ my @expected = qw(-3 -3 -3 -3 -3 6 7 8 9 10);
 ok($results[$_] == $expected[$_], "Got expected result for entry $_") for (0..9);
 
 # Test a device-to-device copy:
-eval{ Transfer($dev_ptr => $dev_ptr + 30*$sizeof_float, $sizeof_float) };
+eval{ Transfer($dev_ptr => Offset($dev_ptr => '30f'), $sizeof_float) };
 ok($@ eq '', "Device-to-device transfers are OK");
 # Test that it actually copied the correct value:
-Transfer($dev_ptr + 30*$sizeof_float => $test_val);
+Transfer(Offset($dev_ptr => '30f') => $test_val);
 ok(unpack('f', $test_val) == -3, "Device-to-device transfers work");
 # Test that the next surrounding is OK:
-Transfer($dev_ptr + 29*$sizeof_float => $test_val);
+Transfer(Offset($dev_ptr => '29f') => $test_val);
 ok(unpack('f', $test_val) == 30, "Device-to-device transfers don't overwrite things");
-Transfer($dev_ptr + 31*$sizeof_float => $test_val);
+Transfer(Offset($dev_ptr => '31f') => $test_val);
 ok(unpack('f', $test_val) == 32, "Device-to-device transfers don't overwrite things");
 
 

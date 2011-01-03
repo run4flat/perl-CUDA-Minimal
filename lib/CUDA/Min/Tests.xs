@@ -187,10 +187,10 @@ __global__ void multiply_by_constant_kernel(float * data_g, float constant) {
 	data_g[offset] *= constant;
 }
 
-// A kernel meant to fail:
-__global__ void fail_kernel() {
-	float * data = 0;
-	data[threadIdx.x] = threadIdx.x;
+// A kernel meant to always succeed no matter how it's invoked.
+__global__ void kernel_succeed() {
+	float testval = (float)threadIdx.x;
+	testval++;
 }
 
 /////////////////////////////////
@@ -267,6 +267,17 @@ _cuda_multiply_by_constant(SV * dev_data_SV, int length, float constant)
 		multiply_by_constant_kernel<<<dimGrid, N_threads>>>(dev_ptr, constant);
 
 
+# Performs a fatal kernel invocation:
+void
+fail_test()
+	CODE:
+		multiply_by_constant_kernel<<<1, 1010>>>(0, 1);
+
+# Performs a simple kernel that always succeeds:
+void
+succeed_test()
+	CODE:
+		kernel_succeed<<<1, 10>>>();
 
 # The all-host function that should give identical, or near identical, results.
 float

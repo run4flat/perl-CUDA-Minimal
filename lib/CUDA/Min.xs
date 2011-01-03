@@ -117,11 +117,11 @@ ThreadSynchronize()
 	CODE:
 		cudaThreadSynchronize();
 
-void
+SV *
 GetLastError()
 	CODE:
 		cudaError_t err = cudaGetLastError();
-		if (err != cudaSuccess)
-			Perl_croak(aTHX_ "CUDA Error: %s"
-					, cudaGetErrorString(err));
+		RETVAL = newSVpv(cudaGetErrorString(err), 0);
+	OUTPUT:
+		RETVAL
 
