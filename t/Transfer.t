@@ -1,6 +1,6 @@
 # A collection of tests for the Transfer function
 
-use Test::More tests => 23;
+use Test::More tests => 21;
 use CUDA::Min ':all';
 use strict;
 use warnings;
@@ -16,10 +16,6 @@ $@ = '';
 my $dev_ptr = eval{ MallocFrom($host_array) };
 ok($@ eq '', 'MallocFrom works with reasonable data');
 $@ = '';
-
-# Make sure Offset works correctly:
-ok(Offset(0 => '4c') == 4, 'Offset 4c gives a value 4 from the original');
-ok(Offset(0 => '5l') == 20, 'Offset 5l gives a value 20 from the original');
 
 # Get a scalar into which I can pull from the device
 my $results = $host_array;

@@ -19,7 +19,7 @@ our @ISA = qw(Exporter);
 # will save memory.
 our %EXPORT_TAGS = ( 'all' => [ qw(
 		Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError SetSize
-		Offset CheckForErrors
+		Offset Sizeof CheckForErrors
 	) ],
 );
 
@@ -54,16 +54,44 @@ sub MallocFrom ($) {
 	return $dev_ptr;
 }
 
+# A function that determines the number of bytes for a given string.
+sub Sizeof ($) {
+	my $spec = shift;
+	$@ = '';
+	if ($spec =~ /^(\d+)\s*(\w)$/) {
+		my ($N, $pack_type) = ($1, $2);
+		
+		my $sizeof = eval{ length pack $pack_type, 0.45 };
+		return $N * $sizeof unless $@;
+	}
+	# If pack croaked, send an error saying so:
+	croak("Bad pack-string in size specifiation $spec") if $@;
+	# If we're here, it's because the user's spec string didn't match the
+	# required specification:
+	croak("Size specification ($spec) must have the number of copies "
+			. 'followed by the pack type');
+}
+
+# A little function that sorta does pointer arithmetic on device pointers:
+sub Offset ($$) {
+	my ($dev_ptr, $offset) = @_;
+	# Make sure they sent in a meaningful offset value, which is either an
+	# integer number of bytes or a Sizeof string:
+	# string, which should have the
+	# number of copies as the first part, and the pack type as the second:
+	if ($offset =~ /^\d+$/) {
+		return $dev_ptr + $offset;
+	}
+	return $dev_ptr + Sizeof($offset);
+}
+
 # A little function to ensure that the given scalar has the correct length
-sub SetSize ($$;$) {
+sub SetSize ($$) {
 	# Unpack the length:
 	my $new_length = $_[1];
-	if (@_ == 3) {
-		# A third argument means that length refers to the number of elements,
-		# and those elements are of a particular type. Use pack to get the
-		# length of that type and multiply the length appropriately:
-		$new_length *= length pack $_[2], 0;
-	}
+	
+	# Make sure the length is valid:
+	$new_length = Sizeof($new_length) unless $new_length =~ /^\d+$/;
 	
 	# Make sure that we're working with an initialized value and get the length:
 	$_[0] = '' if not defined $_[0];
@@ -81,23 +109,6 @@ sub SetSize ($$;$) {
 	# If it's too long, trim it back (I believe this is efficient, but I'm not
 	# sure):
 	substr ($_[0], $new_length) = '';
-}
-
-# A little function that sorta does pointer arithmetic on device pointers:
-sub Offset ($$) {
-	my ($dev_ptr, $offset) = @_;
-	# Make sure they sent in a meaningful offset string, which should have the
-	# number of copies as the first part, and the pack type as the second:
-	if ($offset =~ /(\d+)\s*(\w)/) {
-		my ($N, $pack_type) = ($1, $2);
-		my $sizeof = length pack $pack_type, 0.45;
-		return $dev_ptr + $N * $sizeof;
-	}
-	else {
-		# Didn't so croak:
-		croak("Offset string ($offset) must have the number of digits "
-				. 'followed by the pack type');
-	}
 }
 
 # Checks for errors. Returns the undefined value if there were no errors. If
@@ -148,7 +159,7 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
  
  # We would like to see the results, so copy them
  # back to the host in a newly allocated host array:
- SetSize(my $results array, length($host_data));
+ SetSize(my $results_array, length($host_data));
  # Copy the results back:
  Transfer($results_dev_ptr => $results_array);
  print "$_\n" foreach (unpack 'f*', $results_array);
@@ -173,17 +184,56 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
               )**2;
  }
  print "Round trip lead to an accumulated squared error of $sq_diff\n";
+ 
+ # Copy -10 and -30 to the fifth and sixth elements:
+ my $to_copy = pack('f*', -10, -30);
+ Transfer($to_copy => Offset($input_dev_ptr, '4f'));
 
 =head1 DESCRIPTION
 
 This module provides what I consider to be the bare minimum amount of
 functionality to get Perl and CUDA talking together nicely, with an emphasis on
 nicely. It does not try to wrap all possible CUDA-C functions. It does not
-attempt to talk with PDL or GSL. It works with plain-ol' packed Perl scalars.
+attempt to talk with PDL or GSL. It works with plain-ol' packed Perl scalars
+and passes around the device pointers as plain-ol' Perl integers.
 
 The underlying assumption is that this will be used in conjunction with
-Inline::C, so if you need to do anything to your packed Perl scalar, you can
-write small C functions to do those.
+Inline::C. In other words, if you need to do any host-side calculations with
+your packed Perl scalar, you can write small C functions to do it quickly. Or
+you can repackage your data in a PDL.
+
+The functions provide basic methods for doing the following:
+
+=over
+
+=item allocating and deallocating Perl and device memory
+
+L</MallocFrom> and L</Malloc> create memory on the device, L</Free> frees
+device-side memory, and L</SetSize> ensures that your Perl scalar has the exact
+amount of memory you want allocated
+
+=item copying data to and from the device
+
+L</Transfer> handles transfers to/from the device as well as between two memory
+locations on the device
+
+=item index manipulation
+
+L</Offset> calculates pointer offsets from a given pointer value for you, and
+L</Sizeof> is supposed to determine numbers of bytes in a safe way
+
+=item thread synchronization
+
+L</ThreadSynchronize> ensures that your kernel invocations have returned, which
+is important for benchmarking
+
+=item error checking
+
+L</GetLastError> and L</CheckForErrors> provide methods for checking on and
+getting the last errors; also, all the other function calls except
+L</ThreadSynchronize> croak when they encounter an error
+
+=back
 
 =head1 FUNCTIONS
 
@@ -220,12 +270,14 @@ allocate on the device. In other words, C<Malloc($N_bytes)> will allocate
 C<$N_bytes> on the device, whereas C<Malloc($packed_array)> will allocate enough
 memory on the device to hold the data in C<$packed_array>. The second form is
 useful when you have a scalar of the appropriate length, but which you do not
-intend to actually copy it to the device. (For example, you need memory on the
-device to hold the output of a kernel invocation.) If you want to copy the
-contents of your packed array, use L</MallocFrom>.
+intend to actually copy to the device. (For example, you need memory on the
+device to hold the *output* of a kernel invocation.) To copy the contents of
+your packed array, use L</MallocFrom>.
 
 Like L</MallocFrom>, this returns a scalar holding the pointer to the
-location in the device memory represented as an integer.
+location in the device memory represented as an integer. Note that this does
+not accept a sizeof-string, but you can call the L</Sizeof> function explicitly
+if you want to use it.
 
 =over
 
@@ -246,12 +298,18 @@ If this encounters trouble, it will croak saying:
 
 Usage example:
 
- use CUDA::Min ':simple';
+ use CUDA::Min ':all';
  my $data = pack('f*', 1..10);
  my $dev_input_ptr = MallocFrom($data);
  my $dev_output_ptr = Malloc($data);
- # $dev_output_ptr now points to memory
- # large enough to hold $data
+ # $dev_output_ptr now points to memory large
+ # enough to hold as much information as $data
+ 
+ # Allocate memory with an explicit number of bytes.
+ # Holds 20 bytes:
+ $dev_ptr1 = Malloc(20);
+ # Holds 45 doubles:
+ $dev_ptr2 = Malloc(Sizeof('45 d'));
 
 =head2 Free (device-pointer, device-pointer, ...)
 
@@ -287,15 +345,33 @@ blocks immediately after your calls to L</Malloc>:
      Free $position, $velocity;
  }
 
+One final note: C<Free> is not magical. If you actually copy the pointer address
+to another variable, you will encounter trouble. This is most likely to crop
+up if you store an offset in a seperate variable (see L</Offset>):
+
+ # allocate device-side memory:
+ my $dev_ptr = Malloc($double_size * $array_length);
+ # get the pointer value to the third element:
+ my $dev_ptr_third_element = Offset($dev_ptr, '2d');
+ # do stuff
+ ...
+ # Free the device memory:
+ Free $dev_ptr;
+ # At this point, $dev_ptr is zero and
+ # $dev_ptr_third_element points to a location
+ # in device memory that is no longer valid.
+ # Best to be safe and set it to zero, too:
+ $dev_ptr_third_element = 0;
+
 =head2 Transfer (source => destination, [bytes])
 
 A simple method to move data around. The third argument, the number of bytes to
 copy, is optional unless both the source and the destination are pointers to
 memory on the device. If you don't specify the number of bytes you want copied
-and either the source or the destination is a packed array, Transfer will copy
-an amount equal to the length of the array.
+and either the source or the destination is a packed array, C<Transfer> will
+copy an amount equal to the length of the array.
 
-The function determines which scalar is the host and which is the pointer to the
+C<Transfer> determines which scalar is the host and which is the pointer to the
 device by examining the variables' internals. A packed array will always 'look'
 like a character string, whereas a pointer will usually 'look' like an integer.
 
@@ -318,23 +394,62 @@ pointers but don't specify the length, you'll get this:
 
  You must provide the number of bytes for device-to-device transfers
 
-Also, you cannot use Transfer to copy one Perl scalar to another:
+Also, you cannot use C<Transfer> to copy one Perl scalar to another:
 
  Transfer requires at least one of the arguments to be a device pointer
  but it looks like both are host arrays
 
 If you try to copy more data to the host than it can hold, or if you try to copy
-more data from the host than it currently holds, you'll get this error:
+more data from the host than it currently holds (which only happens when you
+specify a number of bytes and it's too large), you'll get this error:
 
  Attempting to transfer more data than the host can accomodate
 
-The on remaining error happens when memory cannot be copied. It's an error
+The one remaining error happens when memory cannot be copied. It's an error
 thrown by CUDA itself, and it's probably due to using an invalid pointer or
 something. The error looks like this:
 
  Unable to copy memory: <reason>
 
-=head2 Offset (device-pointer, offset-string)
+=head2 Sizeof (sizeof-string)
+
+Computes the size of the given specification. The specification has two parts.
+The second part is the Perl L<pack> type (f for float, d for double, c for char,
+etc), and the first is the number of copies you want. They can be seperated by
+an optional space for clarity. Use this to calculate the number of bytes in
+a way that makes your code clearer.
+
+=over
+
+=item Input
+
+a specification string
+
+=item Output
+
+an integer number of bytes corresponding to the specification string
+
+=back
+
+If you have a bad specification string, this will croak with the following
+message:
+
+ Size specification (<specification>) must have the
+ number of copies followed by the pack type
+
+If you provided an invalid pack type, you'll see this:
+
+ Bad pack-string in size specifiation <specification>
+
+Here are some examples that will hopefully make things clear about specifying
+good strings for C<Sizeof>:
+
+ # the number of bytes in a 20-element double array:
+ $bytes = Sizeof('20 d');
+ # the number of bytes in an N-element character array:
+ $bytes = Sizeof("$N c");
+
+=head2 Offset (device-pointer, bytes or sizeof-string)
 
 A somewhat slow and verbose but hopefully clear and forward-compatible method
 for computing a pointer offset. Suppose you want to transfer data starting from
@@ -342,31 +457,30 @@ the fifth element of a device array of floats. You could hard-code like so:
 
  Transfer($dev_ptr + 20 => $result);
 
-That uses a magic number. C<Offset> is here to hopefully make the meaning of
-your code clearer:
+That uses a magic number. Use C<Offset> to clarify the meaning of your code:
 
  Transfer(Offset($dev_ptr => '5f') => $result)
 
-The offset string has two parts. The second part is the Perl L<pack> type (f
-for float, d for double, c for char, etc), and the first is the number of copies
-you want. They can be seperated by an optional space.
+You can simply specify the number of bytes, if you know them; otherwise, you
+can specify a string that L</Sizeof> knows how to parse, and C<Offset> will get
+the proper size that way.
 
 Some examples should make this clearer:
 
  # Get the address of the fifth element of a double array:
  $dev_fifth = Offset($dev_ptr => '5d');
  # Get the offset of the nth element of a char array, where
- # the offset set is stored in the variable C<$offset>:
+ # the offset is stored in the variable $offset:
  $dev_offset_ptr = Offset($dev_ptr => "$offset c");
-
-Notice how the space in the second example above clarifies the meaning and
-saves you from having to surround your offset variable in curly braces.
+ # Since chars are always one byte, you could just specify
+ # the number of bytes, like this:
+ $dev_offset_ptr = Offset($dev_ptr => $offset);
 
 =over
 
 =item Input
 
-the initial pointer (an integer) and the offset string
+the initial pointer (an integer) and an integer offset or a sizeof-string
 
 =item Output
 
@@ -374,23 +488,21 @@ a pointer value offset from the original by the desired amount
 
 =back
 
-=head2 SetSize (perl-scalar, new-length, [pack-type])
+This does not throw any errors itself, but if you specify an erroneous
+sizeof-string, L</Sizeof> will throw an error.
+
+=head2 SetSize (perl-scalar, bytes or sizeof-string)
 
 A function that ensures that the perl scalar that you're using has exactly the
-length that you want. This function takes either two or three arguments. In the
-two argument form, C<new-length> is taken as the length in bytes; in the three
-argument form, C<pack-type> is a string indicating the L<pack> string type ('f'
-for float, 'd' for double, etc) and C<new-length> is taken as the number of
-elements of that type that you want. The pack type is not stored anywhere and it
-has no impact on how you actually use the memory; it simply makes allocating
-arrays of 10 floats or 20 ints a little bit clearer.
+length that you want. This function takes two arguments, the perl scalar whose
+length you want set and the number of bytes or sizeof-string that specifies the
+desired length.
 
 =over
 
 =item Input
 
-a Perl scalar whose length is to be set, the new length, and optionally the pack
-type of the elements in the array.
+a Perl scalar whose length is to be set and the new length
 
 =item Output
 
@@ -404,14 +516,14 @@ Here are some examples:
  my $data = pack 'd*', 1..10;
  # Change that array so that it holds 20 doubles (the 10 extra are automatically
  # set to zero):
- SetSize($data, 20, 'd');
+ SetSize($data, '20d');
  # Create a new array that's the same size as $data
  my $new_data;
  SetSize($new_data, length($data));
  # or in one line:
  SetSize(my $new_data, length($data));
  # Shorten $new_data so it only holds 20 ints:
- SetSize($new_data, 20, 'i');
+ SetSize($new_data, '20 i');
 
 =head2 ThreadSynchronize
 
@@ -421,24 +533,28 @@ When you execute a kernel, the process returns immediately, before the kernel
 finishes. This is useful if you want to do other things while the kernel runs
 (some file IO during long-running kernels, for example). However, if you want to
 benchmark your code, you need to be sure that the kernel has finished executing.
-You accomplish this by copying data to/from the device, or by calling this
-function. It takes no arguments and returns nothing. It simply blocks until all
-the threads are done.
+You accomplish this by copying data to/from the device (because those functions
+wait for the threads to finish), or by calling this function. It takes no
+arguments and returns nothing. It simply blocks until all the threads are done.
+Unlike the other functions, it doesn't even croak if there was an error since
+thread synchronization itself will never cause errors.
 
 =head2 GetLastError
 
 This is a simple wrapper for C<cudaGetLastError>. It returns a string describing
-the last error. If there were no errors, it returns the string 'no errors'. If
-the error is a recoverable one, it clears the error (see L</Unspecified launch
-failure>). For a slightly more idiomatic error checker, see L</CheckForErrors>.
+the last error. It returns exactly what CUDA tells it to say, so as of this time
+of writing, if there were no errors, it returns the string 'no errors'. It also
+clears the error so that further CUDA function calls will not croak. (But see
+L</Unspecified launch failure> below.) For a slightly more Perlish error
+checker, see L</CheckForErrors>.
 
 =head2 CheckForErrors
 
 Checks for CUDA errors. Returns the undefined value if there are no errors.
 Otherwise, it returns the errors string. It also sets C<$@> with the error
-string, so you'll want to be sure to clear that if you find an error.
-
-Note that this does not actually croak with the error. It simply sets C<$@>.
+string, if this was an error, so you'll want to be sure to clear that if you
+find one. Note that this does not actually croak with the error; it simply sets
+C<$@>.
 
 =over
 
@@ -448,8 +564,8 @@ none
 
 =item Output
 
-a true or false value, depending on whether it did or did not find an error;
-also sets C<$@> with the error string
+C<undef> if no errors or the error string if there were; also sets C<$@> with
+the error string if there was one
 
 =back
 
@@ -472,11 +588,12 @@ but see L</Unspecified launch failure> below.
 =head1 Unspecified launch failure
 
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
-C<cudaGetLastError>, making later checks for CUDA errors ok unless they actually
-had trouble. An important exception is the C<unspecified launch failure>, which
-is unrecoverable as far as I can tell. In other words, if you get an
-C<unspecified launch failure> in your code, any further kernel invocations
-will croak and indicate an unspecified launch failure.
+C<cudaGetLastError>, which happens when any of these functions croak, or when
+you call L</GetLastError> or L</CheckForErrors>. With one exception, later
+checks for CUDA errors should be ok unless they actually had trouble. The
+exception is the C<unspecified launch failure>, which will cause all further
+kernel launches to fail with C<unspecified launch failure>. As far as I know,
+the only way to clear that error is to quit and restart your process.
 
 The best solution to this, in my opinion, is to make sure you have rock-solid
 input validation before invoking kernels. If your input to your kernels are
@@ -495,10 +612,19 @@ multi-threaded approach would even work. :-)
 =head1 EXPORTS
 
 This exports no functions by default. If you like, you can choose to export all
-functions, in which case you'll get:
+functions. In other words, your code will look like this with no imports:
 
-C<Free>, C<Malloc>, C<MallocFrom>, C<Transfer>, C<SetSize>, C<ThreadSynchronize>,
-and C<GetLastError>.
+ use CUDA::Min;
+ my $dev_ptr = CUDA::Min::Malloc(CUDA::Min::Sizeof '20f');
+
+Or, you can choose to import all functions like this:
+
+ use CUDA::Min ':all';
+ my $dev_ptr = Malloc(Sizeof '20f');
+
+You can also import individual functions by specifying their names:
+
+ use CUDA::Min qw(Malloc Free);
 
 =head1 BUGS AND LIMITATIONS
 
@@ -506,8 +632,12 @@ There is one big fat glaring bug with this library, which is that if you
 allocate any memory on the device, the script will die, at the very very end,
 with a segmentation fault. Any help on this would be much appreciated.
 
-The major shortcoming of this library is that it does not provide an interface
-to global variables on the device. That, probaly, should be addressed.
+A potentially major shortcoming of this library is that it does not provide an
+interface to global variables on the device. If have not decided if that's a bug
+or a feature. I think it may be good because it requires kernel writers to
+explicitly provide functions for manipulating global memory locations, which I
+think is a good idea. Real-world usage will tell whether or not such a function
+should be available.
 
 The library also does not provide commands to a myriad of function calls
 provided by CUDA-C (i.e. the 'Array' and 'Async' functions, not to mention
@@ -544,11 +674,11 @@ Massively Parallel Processors: A Hands-on Approach>.
 David Mertens, E<lt>dcmertens.perl.csharp@gmail.comE<gt>
 
 That email address is obfuscated. My actual email address only has one
-programming language in it. :-)
+programming language in it. I'm sure you can figure out which one to remove.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2010 by David Mertens
+Copyright (C) 2010-2011 by David Mertens
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
