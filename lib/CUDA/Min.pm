@@ -6,6 +6,9 @@ use warnings;
 use bytes;
 use Carp 'croak';
 
+# Needed to distinguish refs from objects
+use attributes 'reftype';
+
 require Exporter;
 
 our @ISA = qw(Exporter);
@@ -19,7 +22,7 @@ our @ISA = qw(Exporter);
 # will save memory.
 our %EXPORT_TAGS = ( 'all' => [ qw(
 		Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError SetSize
-		Offset Sizeof CheckForErrors
+		Sizeof CheckForErrors
 	) ],
 );
 
@@ -27,6 +30,7 @@ our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw(
 	Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError CheckForErrors
+	Sizeof
 );
 
 our $VERSION = '0.01';
@@ -35,34 +39,82 @@ our $VERSION = '0.01';
 # Perl-side functions #
 #######################
 
-# an internal boolean routine that checks if the argument is a piddle:
-sub is_a_piddle ($) {
-	return ref($_[0]) and ref($_[0]) eq 'PDL'
+# an internal boolean routine that checks if the argument is an object:
+sub is_an_object ($) {
+	return ref($_[0]) and ref($_[0]) ne reftype($_[0])
 }
 
 # Just a wrapper for the _free function call, the 'internal' function that
 # actually calls cudaFree.
 sub Free {
-	eval { _free($_) foreach @_ };
-	if ($@) {
-		# Clean up the error and pass it along:
-		$@ =~ s/ at .*$//;
-		croak($@);
+	my @errors;
+	# If called from cleanup code (from a previous croak or die), the caller
+	# needs to save $@ on its own:
+	$@ = '';
+	
+	# Run through all of the arguments and free them:
+	POINTER: for (my $i = 1; @_; $i++) {
+		my $dev_ptr = shift;
+		# Use these to capture troubles with free, but still work on the
+		# rest of the device memory:
+		eval {
+			if (is_an_object $dev_ptr) {
+				# If it's an object that knows how to free itself, let it free
+				# itself:
+				if ($dev_ptr->can('free_dev_memory')) {
+					$dev_ptr->free_dev_memory;
+					next POINTER;
+				}
+				# If it's an object that at least knows about device memory,
+				# retrieve that and free it.
+				elsif ($dev_ptr->can('get_dev_ptr')) {
+					_free($dev_ptr->get_dev_ptr);
+				}
+				# Otherwise, it's an object I don't know how to work with. Throw
+				# an error (which is caught 10 lines below)
+				else {
+					die("Argument $i in the list looks like an object of type "
+							. ref($dev_ptr)
+							. ", which does not appear to mimic device memory\n");
+				}
+			}
+			# If it looks like a scalar, then just call _free on it:
+			else {
+				_free($dev_ptr);
+			}
+		};
+		# Collect all the errors, which I will report at the end:
+		if ($@) {
+			# Clean up any line references since I will be re-croaking the
+			# error, with an updated line reference:
+			$@ =~ s/ at .*$//;
+			push @errors, $@;
+			$@ = '';
+		}
+	}
+	# Croak if there are errors:
+	if (@errors) {
+		croak(join("\n", @errors));
 	}
 }
 
-# A wrapper for the _malloc function that checks if an argument is a PDL object.
+# A wrapper for the _malloc function that checks if an argument is an object.
 # If so, it gets the length and sends that value to _malloc:
 sub Malloc ($) {
 	croak('Cannot call Malloc in a void context') unless defined wantarray;
-	# Special piddle processing:
-	if (is_a_piddle $_[0]) {
-		my $pdl = shift;
-		my $nelem = $pdl->nelem;
-		my $sizeof = PDL::Core::howbig($pdl->get_datatype);
-		return _malloc($nelem * $sizeof);
+	# Special object processing:
+	if (is_an_object $_[0]) {
+		my $object = shift;
+		if (my $func = $object->can('nbytes')) {
+			return _malloc($func->($object));
+		}
+		else {
+			croak('Attempting to allocate memory from an object of type '
+				. ref($object) . ' but that class does not know how to say nbytes');
+		}
 	}
-	# otherwise, just call _malloc:
+	# otherwise, just call _malloc, which will assume it's a packed string and
+	# go from there.
 	return _malloc($_[0]);
 }
 
@@ -74,106 +126,94 @@ sub MallocFrom ($) {
 	return $dev_ptr;
 }
 
-# A function that wraps the _transfer function and checks for PDL:
+# A function that wraps the _transfer function, or delegates the transfer if it
+# gets an object as one (or both) of the arguments:
 sub Transfer ($$;$) {
-	croak("You cannot call Transfer on two piddle values")
-		if (is_a_piddle $_[0] and is_a_piddle $_[1]);
-	if (is_a_piddle $_[0]) {
-		# If the first argument is a piddle, get the dataref and dereference it,
-		# and pass that long to _transfer, which expects a packed scalar:
-		my $pdl = $_[0];
-		my $data_ref = $pdl->get_dataref;
-		if (@_ == 3) {
-			eval {_transfer($$data_ref, $_[1], $_[2]) };
-			if ($@) {
-				# Remove the current line from the croak statement and rethrow:
-				$@ =~ s/ at .*//;
-				croak($@);
-			}
-		}
-		else {
-			eval {_transfer($$data_ref, $_[1]) };
-			if ($@) {
-				# Remove the current line from the croak statement and rethrow:
-				$@ =~ s/ at .*//;
-				croak($@);
-			}
-		}
-		# It shouldn't have any issues, but update the piddle data, to be safe:
-		$pdl->upd_data;
-		return;
+	# If the first argument is an object and it mimics device memory, get the
+	# device memory and call Transfer again:
+	if (is_an_object($_[0]) and $_[0]->can('get_dev_ptr')) {
+		my $object = shift;
+		unshift @_, $object->get_dev_ptr;
+		goto &Transfer;
 	}
-	if (is_a_piddle $_[1]) {
-		# If the second argument is a piddle, the user wants to update the pdl's
-		# data with a memory transfer. Retrieve the reference to the piddle's
-		# internal data and update it:
-		my $pdl = $_[1];
-		my $data_ref = $pdl->get_dataref;
-		if (@_ == 3) {
-			eval {_transfer($_[0], $$data_ref, $_[2]) };
-			if ($@) {
-				# Remove the current line from the croak statement and rethrow:
-				$@ =~ s/ at .*//s;
-				croak($@);
-			}
-		}
-		else {
-			eval {_transfer($_[0], $$data_ref) };
-			if ($@) {
-				# Remove the current line from the croak statement and rethrow:
-				$@ =~ s/ at .*//s;
-				croak($@);
-			}
-		}
-		# Update the data:
-		$pdl->upd_data;
-		return;
+	# Repeat for the second argument:
+	if (is_an_object($_[1]) and $_[1]->can('get_dev_ptr')) {
+		splice @_, 1, 1, $_[1]->get_dev_ptr;
+		goto &Transfer;
 	}
-	# If we're here, then neither of the arguments is a PDL object, so just
-	# call the XS function, which will handle everything else from here:
+	
+	# If I'm here, I know that any mocking of the device memory should have
+	# been handled. Now I look to see if anything mimics host memory and call
+	# that object's send_to function:
+	if (is_an_object($_[0])) {
+		my $send_to_func = $_[0]->can('send_to');
+		croak("First argument to Transfer is an object, but it doesn't mimic either device or host memory")
+			unless $send_to_func;
+		goto &$send_to_func;
+	}
+	if (is_an_object($_[1])) {
+		my $get_from_func = $_[1]->can('get_from');
+		croak("Second argument to Transfer is an object, but it doesn't mimic either device or host memory")
+			unless $get_from_func;
+		# Rearrange the elements before going to the function:
+		unshift @_, splice (@_, 1, 1);
+		goto &$get_from_func;
+	}
+	
+	# If I've gotten here, then none of the arguments are objects, they're all
+	# scalars. I can just go to the underlying _transfer function, which will
+	# handle everything else from here:
 	goto &_transfer;
 }
 
-# A function that determines the number of bytes for a given spec string.
+# A function that determines the number of bytes to which its argument refers.
+# Sizeof can be an object that mimics host memory, or it can be a packed scalar,
+# or it can be a spec string.
 sub Sizeof ($) {
-	my $spec = shift;
+	# If it's an object, return the value of its nbytes method, or croak if
+	# no such method exists:
+	if (is_an_object($_[0])) {
+		my $obj = shift;
+		return $obj->nbytes if $obj->can('nbytes');
+		croak("Argument to Sizeof is an object of type " . ref($obj)
+					. ", but it does not mimic host memory");
+	}
+	# If it looks like a spec string, then us pack to determine the size:
 	$@ = '';
-	if ($spec =~ /^(\d+)\s*(\w)$/) {
+	if ($_[0] =~ /^(\d+)\s*(\w)$/) {
+		my $spec = shift;
 		my ($N, $pack_type) = ($1, $2);
 		
 		my $sizeof = eval{ length pack $pack_type, 0.45 };
 		return $N * $sizeof unless $@;
+		
+		# If pack croaked, send an error saying so:
+		croak("Bad pack-string in size specifiation $spec") if $@;
 	}
-	# If pack croaked, send an error saying so:
-	croak("Bad pack-string in size specifiation $spec") if $@;
-	# If we're here, it's because the user's spec string didn't match the
-	# required specification:
-	croak("Size specification ($spec) must have the number of copies "
-			. 'followed by the pack type');
-}
-
-# A little function that sorta does pointer arithmetic on device pointers:
-sub Offset ($$) {
-	my ($dev_ptr, $offset) = @_;
-	# Make sure they sent in a meaningful offset value, which is either an
-	# integer number of bytes or a Sizeof string:
-	# string, which should have the
-	# number of copies as the first part, and the pack type as the second:
-	if ($offset =~ /^\d+$/) {
-		return $dev_ptr + $offset;
-	}
-	return $dev_ptr + Sizeof($offset);
+	# Otherwise, assume it's a packed string, in which case I just return
+	# the number of bytes:
+	return length $_[0];
 }
 
 # A little function to ensure that the given scalar has the correct length
 sub SetSize ($$) {
-	# Make sure the first argument is not a piddle:
-	croak("Cannot call SetSize on a piddle.") if is_a_piddle($_[0]);
 	# Unpack the length:
-	my $new_length = $_[1];
-	
+	my $new_length = pop;
+
 	# Make sure the length is valid:
 	$new_length = Sizeof($new_length) unless $new_length =~ /^\d+$/;
+	
+	# Delegate object methods:
+	if (is_an_object($_[0])) {
+		my $object = shift;
+		if ($object->can('n_bytes')) {
+			return $object->n_bytes($new_length);
+		}
+		else {
+			croak("SetSize called on an object of type " . ref($object)
+				. ", but it does not mimic host memory");
+		}
+	}
 	
 	# Make sure that we're working with an initialized value and get the length:
 	$_[0] = '' if not defined $_[0];
@@ -191,6 +231,9 @@ sub SetSize ($$) {
 	# If it's too long, trim it back (I believe this is efficient, but I'm not
 	# sure):
 	substr ($_[0], $new_length) = '';
+	
+	# Finish by returning the new length, in bytes:
+	return $new_length;
 }
 
 # Checks for errors. Returns the undefined value if there were no errors. If
@@ -212,8 +255,18 @@ XSLoader::load('CUDA::Min', $VERSION);
 # PDL OO Interface #
 ####################
 
+sub PDL::nbytes {
+	my $self = shift;
+	my $new_length = shift;
+	croak("Changing the size of a piddle with SetSize or nbytes is not implemented")
+		if (defined $new_length);
+	
+	return PDL::Core::howbig($self->get_datatype) * $self->nelem;
+}
+
 sub PDL::send_to {
-	my ($self, $dev_ptr) = @_;
+	my ($self, $dev_ptr, ) = @_;
+	
 	Transfer($self => $dev_ptr);
 	return $self;
 }
@@ -917,5 +970,48 @@ Copyright (C) 2010-2011 by David Mertens
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
 at your option, any later version of Perl 5 you may have available.
+
+=head1 NEW API
+
+You can now send objects in place of dev-ptr or packed-array.
+
+=head2 packed-array object
+
+A class that intends to mimc host memory needs to provide the following methods:
+
+=over
+
+=item nbytes
+
+Getter and setter
+
+=item send_to
+
+Sends data to the device
+
+=item get_from
+
+Gets data from the device
+
+=back
+
+=head2 dev-ptr object
+
+A class that intends to mimic device memory needs to provide the following
+methods:
+
+=over
+
+=back
+
+=item get_dev_ptr (required)
+
+Returns an integer that can be interpreted as a device pointer
+
+=item free_dev_memory (optional)
+
+Frees device memory. If not supplied, the internal _free function will be
+called on the result of get_dev_ptr, which will automatically set its argument
+to zero.
 
 =cut
