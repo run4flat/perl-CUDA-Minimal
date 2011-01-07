@@ -26,7 +26,7 @@ our %EXPORT_TAGS = ( 'all' => [ qw(
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 our @EXPORT = qw(
-	
+	Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError CheckForErrors
 );
 
 our $VERSION = '0.01';
@@ -34,6 +34,11 @@ our $VERSION = '0.01';
 #######################
 # Perl-side functions #
 #######################
+
+# an internal boolean routine that checks if the argument is a piddle:
+sub is_a_piddle ($) {
+	return ref($_[0]) and ref($_[0]) eq 'PDL'
+}
 
 # Just a wrapper for the _free function call, the 'internal' function that
 # actually calls cudaFree.
@@ -46,6 +51,21 @@ sub Free {
 	}
 }
 
+# A wrapper for the _malloc function that checks if an argument is a PDL object.
+# If so, it gets the length and sends that value to _malloc:
+sub Malloc ($) {
+	croak('Cannot call Malloc in a void context') unless defined wantarray;
+	# Special piddle processing:
+	if (is_a_piddle $_[0]) {
+		my $pdl = shift;
+		my $nelem = $pdl->nelem;
+		my $sizeof = PDL::Core::howbig($pdl->get_datatype);
+		return _malloc($nelem * $sizeof);
+	}
+	# otherwise, just call _malloc:
+	return _malloc($_[0]);
+}
+
 # A nice one-two punch to allocate memory on the device and copy the values
 sub MallocFrom ($) {
 	croak('Cannot call MallocFrom in void context') unless defined wantarray;
@@ -54,7 +74,67 @@ sub MallocFrom ($) {
 	return $dev_ptr;
 }
 
-# A function that determines the number of bytes for a given string.
+# A function that wraps the _transfer function and checks for PDL:
+sub Transfer ($$;$) {
+	croak("You cannot call Transfer on two piddle values")
+		if (is_a_piddle $_[0] and is_a_piddle $_[1]);
+	if (is_a_piddle $_[0]) {
+		# If the first argument is a piddle, get the dataref and dereference it,
+		# and pass that long to _transfer, which expects a packed scalar:
+		my $pdl = $_[0];
+		my $data_ref = $pdl->get_dataref;
+		if (@_ == 3) {
+			eval {_transfer($$data_ref, $_[1], $_[2]) };
+			if ($@) {
+				# Remove the current line from the croak statement and rethrow:
+				$@ =~ s/ at .*//;
+				croak($@);
+			}
+		}
+		else {
+			eval {_transfer($$data_ref, $_[1]) };
+			if ($@) {
+				# Remove the current line from the croak statement and rethrow:
+				$@ =~ s/ at .*//;
+				croak($@);
+			}
+		}
+		# It shouldn't have any issues, but update the piddle data, to be safe:
+		$pdl->upd_data;
+		return;
+	}
+	if (is_a_piddle $_[1]) {
+		# If the second argument is a piddle, the user wants to update the pdl's
+		# data with a memory transfer. Retrieve the reference to the piddle's
+		# internal data and update it:
+		my $pdl = $_[1];
+		my $data_ref = $pdl->get_dataref;
+		if (@_ == 3) {
+			eval {_transfer($_[0], $$data_ref, $_[2]) };
+			if ($@) {
+				# Remove the current line from the croak statement and rethrow:
+				$@ =~ s/ at .*//s;
+				croak($@);
+			}
+		}
+		else {
+			eval {_transfer($_[0], $$data_ref) };
+			if ($@) {
+				# Remove the current line from the croak statement and rethrow:
+				$@ =~ s/ at .*//s;
+				croak($@);
+			}
+		}
+		# Update the data:
+		$pdl->upd_data;
+		return;
+	}
+	# If we're here, then neither of the arguments is a PDL object, so just
+	# call the XS function, which will handle everything else from here:
+	goto &_transfer;
+}
+
+# A function that determines the number of bytes for a given spec string.
 sub Sizeof ($) {
 	my $spec = shift;
 	$@ = '';
@@ -87,6 +167,8 @@ sub Offset ($$) {
 
 # A little function to ensure that the given scalar has the correct length
 sub SetSize ($$) {
+	# Make sure the first argument is not a piddle:
+	croak("Cannot call SetSize on a piddle.") if is_a_piddle($_[0]);
 	# Unpack the length:
 	my $new_length = $_[1];
 	
@@ -124,6 +206,24 @@ sub CheckForErrors () {
 require XSLoader;
 XSLoader::load('CUDA::Min', $VERSION);
 
+
+
+####################
+# PDL OO Interface #
+####################
+
+sub PDL::send_to {
+	my ($self, $dev_ptr) = @_;
+	Transfer($self => $dev_ptr);
+	return $self;
+}
+
+sub PDL::get_from {
+	my ($self, $dev_ptr) = @_;
+	Transfer($dev_ptr => $self);
+	return $self;
+}
+
 1;
 __END__
 
@@ -133,7 +233,7 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
 
 =head1 SYNOPSIS
 
- use CUDA::Min ':all';
+ use CUDA::Min';
  # Create a host-side array of 10 sequential
  # single-precision floating-point values:
  my $N_values = 10;
@@ -189,18 +289,47 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
  my $to_copy = pack('f*', -10, -30);
  Transfer($to_copy => Offset($input_dev_ptr, '4f'));
 
+=head1 PDL SYNOPSIS
+
+ # The order of inclusion is not important:
+ use PDL;
+ use CUDA::Min;
+ use PDL::NiceSlice;
+ 
+ # Create a double array of 20 sequential elements:
+ my $data = sequence(20);
+ 
+ # Allocate memory on the device and transfer it:
+ my $dev_ptr = MallocFrom($data);
+ 
+ # Allocate more memory on the device with the same size:
+ my $dev_ptr2 = Malloc($data);
+ 
+ # Create some more values, host-side:
+ my $randoms = $data->random;
+ 
+ # Copy the random values to the device:
+ Transfer($randoms => $dev_ptr2);
+ 
+ # Using send_to PDL method:
+ $randoms->send_to($dev_ptr2);
+ 
+ # Copy the first five random values back
+ # into elements 5-10 of the original array:
+ $data(5:9)->get_from($dev_ptr2);
+ 
+ # Free the device memory, of course:
+ Free($dev_ptr, $dev_ptr2);
+
 =head1 DESCRIPTION
 
-This module provides what I consider to be the bare minimum amount of
+This module provides what I consider to be a decent but minimal amount of
 functionality to get Perl and CUDA talking together nicely, with an emphasis on
-nicely. It does not try to wrap all possible CUDA-C functions. It does not
-attempt to talk with PDL or GSL. It works with plain-ol' packed Perl scalars
-and passes around the device pointers as plain-ol' Perl integers.
+nicely. It works with plain-ol' packed Perl scalar, and it works nicely with
+PDL. (However, it does not require that you have PDL installed to use it.)
 
-The underlying assumption is that this will be used in conjunction with
-Inline::C. In other words, if you need to do any host-side calculations with
-your packed Perl scalar, you can write small C functions to do it quickly. Or
-you can repackage your data in a PDL.
+It does not try to wrap all possible CUDA-C functions. I said nice, not
+complete.
 
 The functions provide basic methods for doing the following:
 
@@ -215,7 +344,9 @@ amount of memory you want allocated
 =item copying data to and from the device
 
 L</Transfer> handles transfers to/from the device as well as between two memory
-locations on the device
+locations on the device, and two PDL methods, L</send_to> and L</get_from>,
+allow for compact data transfer between piddles and device memory and standard
+chaining syntax common to PDL
 
 =item index manipulation
 
@@ -235,9 +366,14 @@ L</GetLastError>, and L</CheckForErrors> croak when they encounter an error
 
 =back
 
+This module does not, however, provide any user-level kernels. (It does have one
+kernel, for summing data, but don't use it; it's not very well written.) It is
+hoped this will provide a base for managing data, so that later CUDA modules
+can focus on writing kernels.
+
 =head1 FUNCTIONS
 
-=head2 MallocFrom (packed-array)
+=head2 MallocFrom (packed-array or piddle)
 
 A convenient function for allocating and initializing device-side memory. It
 will often be the case that you want to create an array on the device simply so
@@ -249,7 +385,7 @@ represented as an integer.
 
 =item Input
 
-a packed Perl scalar with data that you want copied to the device
+a piddle or a packed Perl scalar with data that you want copied to the device
 
 =item Output
 
@@ -262,7 +398,7 @@ To just create memory on the device without copying it, see L</Malloc>. This is
 just a wrapper for L</Malloc> and L</Transfer>, so if you get any errors, see
 those functions for error-message details.
 
-=head2 Malloc (bytes or packed-array)
+=head2 Malloc (bytes or packed-array or piddle)
 
 Unlike L</MallocFrom>, this can take either an integer with the desired number
 of bytes to allocate, or a packed scalar with the length that you want to
@@ -283,8 +419,9 @@ if you want to use it.
 
 =item Input
 
-an integer with the number of desired bytes
-or a packed Perl scalar of the desired length
+an integer with the number of desired bytes,
+or a packed Perl scalar of the desired length,
+or a piddle with the desired number and type of elements
 
 =item Output
 
@@ -310,6 +447,10 @@ Usage example:
  $dev_ptr1 = Malloc(20);
  # Holds 45 doubles:
  $dev_ptr2 = Malloc(Sizeof('45 d'));
+ 
+ # PDL example:
+ my $data = sequence(20);
+ my $dev_ptr = Malloc($data);
 
 =head2 Free (device-pointer, device-pointer, ...)
 
@@ -374,6 +515,7 @@ copy an amount equal to the length of the array.
 C<Transfer> determines which scalar is the host and which is the pointer to the
 device by examining the variables' internals. A packed array will always 'look'
 like a character string, whereas a pointer will usually 'look' like an integer.
+And of course, a piddle obviously looks like a piddle.
 
 =over
 
@@ -384,8 +526,9 @@ optional number of bytes
 
 =item Output
 
-none, although if the destination is a packed array, its contents will be
-modified
+none, although if the destination is a packed array or piddle, its contents will
+be modified; if the destination is a chunk of device memory, its contents will
+be modified
 
 =back
 
@@ -398,6 +541,11 @@ Also, you cannot use C<Transfer> to copy one Perl scalar to another:
 
  Transfer requires at least one of the arguments to be a device pointer
  but it looks like both are host arrays
+
+You'll get that if both of your arguments is a packed scalar, or if one is a
+packed scalar and the other is a piddle. If both are a piddle, you'll see this:
+
+ You cannot call Transfer on two piddle values
 
 If you try to copy more data to the host than it can hold, or if you try to copy
 more data from the host than it currently holds (which only happens when you
@@ -496,7 +644,8 @@ sizeof-string, L</Sizeof> will throw an error.
 A function that ensures that the perl scalar that you're using has exactly the
 length that you want. This function takes two arguments, the perl scalar whose
 length you want set and the number of bytes or sizeof-string that specifies the
-desired length.
+desired length. This will not change the size of a piddle, and will croak if you
+try to use it like that. C<SetSize> should only be called on packed scalars.
 
 =over
 
@@ -524,6 +673,10 @@ Here are some examples:
  SetSize(my $new_data, length($data));
  # Shorten $new_data so it only holds 20 ints:
  SetSize($new_data, '20 i');
+
+If you try to call this on a piddle, you will get the following error:
+
+ Cannot call SetSize on a piddle.
 
 =head2 ThreadSynchronize
 
@@ -585,6 +738,67 @@ A nice idiom for error checking is this:
 Calling this function will clear CUDA's error status, if there was an error,
 but see L</Unspecified launch failure> below.
 
+=head1 PDL METHODS
+
+CUDA::Min supports using piddles in place of packed scalars in most of its
+arguments (everywhere you're likely to want them, at least) and it provides two
+PDL methods for data transfer, L</send_to> and L</get_from>. Both of them take
+only one argument: the device memory location.
+
+=head2 send_to
+
+Use this method to send the contents of a piddle to device memory. For an
+example, see the L</PDL Example>.
+
+=head2 get_from
+
+Use this method to retrive the contents of a section of device memory I<and
+store them in the invoking piddle>. You can think of this operation as happening
+I<in place>.
+
+=head2 PDL Example
+
+This simple example loads a series of data sets from your disk and runs them
+through a kernel (or collection of kernels) on your device. Don't be naive.
+There is a lot of memory transfer happening here, and unless you have a I<lot>
+of processing on the device, this is not going to be very efficient.
+
+working here - this doesn't actually use the PDL methods
+
+ use PDL;
+ use PDL::IO::FastRaw;
+ 
+ # Get the list of data files:
+ my @files = glob('*.dat');
+ 
+ # allocate memory for the results,
+ # one double for each file:
+ my $results = pdl(scalar(@files));
+ 
+ # Allocate enough memory for the
+ # results:
+ my $dev_results = Malloc($results);
+ 
+ # process the kernel and load the next file
+ # while we wait for the kernel to finish
+ forall my $file (@files) {
+     # Load the file from disk:
+     my $data = readfraw pop @files;
+ 
+     # Push it to memory:
+     my $dev_input = MallocFrom($data);
+     
+     # You'll have to write XS or Inline::C
+     # code to make this function available
+     # from Perl:
+     invoke_my_handy_kernel($dev_input, $data->nelem
+                   , $dev_results);
+     
+     # CUDA kernel invocations return
+     # immediately, so make use of the time:
+     $data = readfraw $file;
+ }
+
 =head1 Unspecified launch failure
 
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
@@ -616,20 +830,24 @@ try this route, but I do not recommend it.
 =head1 EXPORTS
 
 This uses the standard L<Exporter> module, so it behaves in a fairly standard
-way. It exports no functions by default. If you like, you can choose to export
-all functions. In other words, your code will look like this with no imports:
+way. I know it's considered modern to not export anything by default, but frakly
+I think that's dumb for this module. As such, it exports the functions that I
+used most when I was developing it, which include:
 
- use CUDA::Min;
- my $dev_ptr = CUDA::Min::Malloc(CUDA::Min::Sizeof '20f');
- ...
- CUDA::Min::Free($dev_ptr);
+ :most 
 
-Or, you can choose to import all functions like this:
+If you're a purist and don't want those, there's nothing stopping you from
+saying
 
- use CUDA::Min ':all';
- my $dev_ptr = Malloc(Sizeof '20f');
- ...
- Free($dev_ptr);
+ use CUDA::Min '';
+
+which won't import anything. You can also use the C<:all> tag, which will import
+
+ function-names
+
+in addition to the ones already listed.
+
+working here - a bit about combining :most with individual functions
 
 You can also import individual functions by specifying their names. In that
 case, you must fully qualify any functions that you don't import, such as
@@ -682,6 +900,8 @@ you don't want to use PDL for some reason, consider using L<Inline::C>.
 
 A decent book on the subject is David Kirk and Wen-mei Hwu's I<Programming
 Massively Parallel Processors: A Hands-on Approach>.
+
+Finally, if you do anything numeric in Perl, you should look at L<PDL>.
 
 =head1 AUTHOR
 

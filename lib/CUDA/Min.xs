@@ -24,13 +24,14 @@ _free(SV * dev_ptr_SV)
 		}
 
 SV *
-Malloc(SV * data_SV)
+_malloc(SV * data_SV)
 	CODE:
 		// First thing's first: guard against calls in void context:
 		if (GIMME_V == G_VOID)
 			Perl_croak(aTHX_ "Cannot call Malloc in void context");
 		void * dev_ptr = 0;
 		size_t data_len = 0;
+		// Check the input arguments:
 		if (SvTYPE(data_SV) == SVt_PV) {
 			// If the host scalar is a PV, use its length:
 			data_len = (size_t)SvCUR(data_SV);
@@ -53,7 +54,7 @@ Malloc(SV * data_SV)
 
 
 void
-Transfer(SV * src_SV, SV * dst_SV, ...)
+_transfer(SV * src_SV, SV * dst_SV, ...)
 	PROTOTYPE: $$;$
 	CODE:
 		void * dst_ptr = 0;

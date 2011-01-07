@@ -32,7 +32,7 @@ our $VERSION = '0.01';
 require XSLoader;
 XSLoader::load('CUDA::Min::Tests', $VERSION);
 
-use CUDA::Min ':all';
+use CUDA::Min;
 use Carp 'croak';
 
 #####################
