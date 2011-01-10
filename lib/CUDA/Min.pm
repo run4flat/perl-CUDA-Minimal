@@ -53,35 +53,39 @@ sub Free {
 	$@ = '';
 	
 	# Run through all of the arguments and free them:
-	POINTER: for (my $i = 1; @_; $i++) {
-		my $dev_ptr = shift;
+	my $i = 0;
+	POINTER: for(@_) {
+		# Now $_ refers to the actual passed scalar, which is supposed to be a
+		# dev pointer.
+		
 		# Use these to capture troubles with free, but still work on the
 		# rest of the device memory:
 		eval {
-			if (is_an_object $dev_ptr) {
+			if (is_an_object $_) {
 				# If it's an object that knows how to free itself, let it free
 				# itself:
-				if ($dev_ptr->can('free_dev_memory')) {
-					$dev_ptr->free_dev_memory;
+				if ($_->can('free_dev_memory')) {
+					$_->free_dev_memory;
 					next POINTER;
 				}
 				# If it's an object that at least knows about device memory,
 				# retrieve that and free it.
-				elsif ($dev_ptr->can('get_dev_ptr')) {
-					_free($dev_ptr->get_dev_ptr);
+				elsif ($_->can('get_dev_ptr')) {
+					_free($_->get_dev_ptr);
 				}
 				# Otherwise, it's an object I don't know how to work with. Throw
 				# an error (which is caught 10 lines below)
 				else {
 					die("Argument $i in the list looks like an object of type "
-							. ref($dev_ptr)
+							. ref($_)
 							. ", which does not appear to mimic device memory\n");
 				}
 			}
 			# If it looks like a scalar, then just call _free on it:
 			else {
-				_free($dev_ptr);
+				_free($_);
 			}
+			$i++;
 		};
 		# Collect all the errors, which I will report at the end:
 		if ($@) {
@@ -142,7 +146,7 @@ sub Transfer ($$;$) {
 		goto &Transfer;
 	}
 	
-	# If I'm here, I know that any mocking of the device memory should have
+	# If I'm here, I know that any mimicking of the device memory should have
 	# been handled. Now I look to see if anything mimics host memory and call
 	# that object's send_to function:
 	if (is_an_object($_[0])) {
@@ -169,40 +173,43 @@ sub Transfer ($$;$) {
 # A function that determines the number of bytes to which its argument refers.
 # Sizeof can be an object that mimics host memory, or it can be a packed scalar,
 # or it can be a spec string.
-sub Sizeof ($) {
+sub Sizeof ($;$) {
 	# If it's an object, return the value of its nbytes method, or croak if
 	# no such method exists:
-	if (is_an_object($_[0])) {
+	if (@_ == 1 and is_an_object($_[0])) {
 		my $obj = shift;
 		return $obj->nbytes if $obj->can('nbytes');
 		croak("Argument to Sizeof is an object of type " . ref($obj)
 					. ", but it does not mimic host memory");
 	}
-	# If it looks like a spec string, then us pack to determine the size:
-	$@ = '';
-	if ($_[0] =~ /^(\d+)\s*(\w)$/) {
-		my $spec = shift;
-		my ($N, $pack_type) = ($1, $2);
-		
-		my $sizeof = eval{ length pack $pack_type, 0.45 };
-		return $N * $sizeof unless $@;
-		
-		# If pack croaked, send an error saying so:
-		croak("Bad pack-string in size specifiation $spec") if $@;
+	# Otherwise if they supplied only one argument, assume it's a packed string
+	# and just return the number of bytes:
+	elsif (@_ == 1) {
+		return length $_[0];
 	}
-	# Otherwise, assume it's a packed string, in which case I just return
-	# the number of bytes:
-	return length $_[0];
+	# Otherwise they supplied two arguments, so process it like a size spec.
+	$@ = '';
+	my ($type, $number) = @_;
+	$number =~ /^\d+$/
+		or croak("Bad size spec: second argument ($number) must be a number");
+	# Compute the sizeof, in an eval, so if the pack string is bad, I can say so
+	my $sizeof = eval{ length pack $type, 5 };
+	return $number * $sizeof unless $@;
+	
+	# If pack croaked, send an error saying so:
+	croak("Bad pack-string '$type' in size specifiation") if $@;
 }
 
-# A little function to ensure that the given scalar has the correct length
-sub SetSize ($$) {
-	# Unpack the length:
+# A function to ensure that the given scalar has the correct length
+sub SetSize ($$;$) {
+	# Unpack the length. If it's a Sizeof spec, then pop off both arguments
+	# and call Sizeof to get them; otherwise, assume the single argument is
+	# the length in bytes:
 	my $new_length = pop;
+	if (@_ == 2) {
+		$new_length = Sizeof($_[1] => $new_length);
+	}
 
-	# Make sure the length is valid:
-	$new_length = Sizeof($new_length) unless $new_length =~ /^\d+$/;
-	
 	# Delegate object methods:
 	if (is_an_object($_[0])) {
 		my $object = shift;
@@ -267,13 +274,15 @@ sub PDL::nbytes {
 sub PDL::send_to {
 	my ($self, $dev_ptr, ) = @_;
 	
-	Transfer($self => $dev_ptr);
+	Transfer(${$self->get_dataref} => $dev_ptr);
+	$self->upd_data;
 	return $self;
 }
 
 sub PDL::get_from {
 	my ($self, $dev_ptr) = @_;
-	Transfer($dev_ptr => $self);
+	Transfer($dev_ptr => ${$self->get_dataref});
+	$self->upd_data;
 	return $self;
 }
 

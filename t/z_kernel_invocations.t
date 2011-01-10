@@ -30,7 +30,7 @@ CUDA::Min::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
 my $test_val = pack 'f', 1;
 for (1..10) {
 	my $offset = int rand $N_elements;
-	Transfer(Offset($dev_ptr => "$offset f") => $test_val);
+	Transfer(Sizeof(f=>$offset) + $dev_ptr => $test_val);
 	ok(unpack('f', $test_val) == ($offset+1)*4, "Position $offset has value " . ($offset+1)*4);
 }
 

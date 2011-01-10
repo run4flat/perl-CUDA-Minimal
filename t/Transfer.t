@@ -26,7 +26,7 @@ my $sizeof_float = length $test_val;
 
 my $offset = int rand $N_elements;
 # Test that Transfer only pulls a single value:
-Transfer(Offset($dev_ptr => "$offset f") => $test_val);
+Transfer(Sizeof(f=>$offset) + $dev_ptr => $test_val);
 ok(unpack('f', $test_val) == $offset+1, "Position $offset has value " . ($offset+1));
 
 # Test that Transfer croaks when asked for more data than test_val can hold
@@ -42,7 +42,7 @@ like($@, qr/both are host arrays/
 $@ = '';
 
 # Test device-to-device transfers without a specified number of bytes:
-eval{ Transfer($dev_ptr => Offset($dev_ptr => '1f')) };
+eval{ Transfer($dev_ptr => $dev_ptr + Sizeof(f=>1)) };
 like($@, qr/device-to-device transfers/
 	, "Device-to-device transfers without a specified number of bytes croaks");
 $@ = '';
@@ -65,15 +65,15 @@ my @expected = qw(-3 -3 -3 -3 -3 6 7 8 9 10);
 ok($results[$_] == $expected[$_], "Got expected result for entry $_") for (0..9);
 
 # Test a device-to-device copy:
-eval{ Transfer($dev_ptr => Offset($dev_ptr => '30f'), $sizeof_float) };
+eval{ Transfer($dev_ptr => $dev_ptr + Sizeof(f=>30), $sizeof_float) };
 ok($@ eq '', "Device-to-device transfers are OK");
 # Test that it actually copied the correct value:
-Transfer(Offset($dev_ptr => '30f') => $test_val);
+Transfer(Sizeof(f=>30) + $dev_ptr => $test_val);
 ok(unpack('f', $test_val) == -3, "Device-to-device transfers work");
 # Test that the next surrounding is OK:
-Transfer(Offset($dev_ptr => '29f') => $test_val);
+Transfer(Sizeof(f=>29) + $dev_ptr => $test_val);
 ok(unpack('f', $test_val) == 30, "Device-to-device transfers don't overwrite things");
-Transfer(Offset($dev_ptr => '31f') => $test_val);
+Transfer(Sizeof(f=>31) + $dev_ptr => $test_val);
 ok(unpack('f', $test_val) == 32, "Device-to-device transfers don't overwrite things");
 
 
