@@ -69,7 +69,7 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 		// Determine if either of the two SVs are the host memory:
 		if (SvTYPE(dst_SV) == SVt_PV && SvTYPE(src_SV) == SVt_PV) {
 			// We can't have both of them looking like host memory:
-			Perl_croak(aTHX_ "Transfer requires at least one of %s\n%s"
+			Perl_croak(aTHX_ "Transfer requires one or more of %s\n%s"
 							, "the arguments to be a device pointer"
 							, "but it looks like both are host arrays");
 		}

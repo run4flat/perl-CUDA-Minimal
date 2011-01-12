@@ -82,6 +82,9 @@ sub Free {
 				}
 			}
 			# If it looks like a scalar, then just call _free on it:
+			elsif (not defined $_) {
+				die "Argument $i not defined\n";
+			}
 			else {
 				_free($_);
 			}
@@ -274,14 +277,24 @@ sub PDL::nbytes {
 sub PDL::send_to {
 	my ($self, $dev_ptr, ) = @_;
 	
-	Transfer(${$self->get_dataref} => $dev_ptr);
+	eval{ Transfer(${$self->get_dataref} => $dev_ptr) };
+	if ($@) {
+		# If I encountered an error, clean up the message and recroak:
+		$@ =~ s/ at .*Min.pm line \d+\.\n//;
+		croak($@);
+	}
 	$self->upd_data;
 	return $self;
 }
 
 sub PDL::get_from {
 	my ($self, $dev_ptr) = @_;
-	Transfer($dev_ptr => ${$self->get_dataref});
+	eval{ Transfer($dev_ptr => ${$self->get_dataref}) };
+	if ($@) {
+		# If I encountered an error, clean up the message and recroak:
+		$@ =~ s/ at .*Min.pm line \d+\.\n//;
+		croak($@);
+	}
 	$self->upd_data;
 	return $self;
 }
