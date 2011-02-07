@@ -351,7 +351,7 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
  # faster way to do this, especially if you allow
  # yourself to use Inline::C, of if you use PDL):
  my $sq_diff = 0;
- my $sizeof_float = length pack 'f', 3.1415;
+ my $sizeof_float = Sizeof f => 1;
  for (my $i = 0; $i < length($host_data); $i += $sizeof_float) {
      $diff += (
                  unpack("x$i f", $host_data)
@@ -360,9 +360,11 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
  }
  print "Round trip lead to an accumulated squared error of $sq_diff\n";
  
- # Copy -10 and -30 to the fifth and sixth elements:
- my $to_copy = pack('f*', -10, -30);
- Transfer($to_copy => Offset($input_dev_ptr, '4f'));
+ # I already freed the device memory 'earlier' by
+ # putting it in an end block, but if you didn't do
+ # that, you would put it here:
+ Free($input_dev_ptr, $results_dev_ptr);
+ 
 
 =head1 PDL SYNOPSIS
 
@@ -404,9 +406,16 @@ nicely. It works with plain-ol' packed Perl scalar, and it works nicely with
 PDL. (However, it does not require that you have PDL installed to use it.)
 
 It does not try to wrap all possible CUDA-C functions. I said nice, not
-complete.
+complete. In fact, this does not even provide any CUDA kernels, or even a
+framework for writing them. However, it does provide some degree of object
+awareness, so that you can create object interfaces to device and host memory
+and pass those objects to functions like C<MallocFrom>, C<Free>, and C<Transfer>.
+If you would like to make objects that mimic device or host memory, see
+L</Object Oriented Interfaces> below.
 
-The functions provide basic methods for doing the following:
+working here - write documentation for object-oriented interfaces.
+
+The functions in this module provide basic methods for doing the following:
 
 =over
 
@@ -420,13 +429,13 @@ amount of memory you want allocated
 
 L</Transfer> handles transfers to/from the device as well as between two memory
 locations on the device, and two PDL methods, L</send_to> and L</get_from>,
-allow for compact data transfer between piddles and device memory and standard
-chaining syntax common to PDL
+allow for concise data transfer between piddles and device memory using the
+standard chaining syntax common to PDL
 
-=item index manipulation
+=item consistent size determination
 
-L</Offset> calculates pointer offsets from a given pointer value for you, and
-L</Sizeof> is supposed to determine numbers of bytes in a safe way
+Whether dealing with packed scalars, piddles, or some other object that handles
+device memory, L</Sizeof> determines the number of bytes that variable can hold
 
 =item thread synchronization
 
@@ -436,12 +445,13 @@ is important for benchmarking
 =item error checking
 
 L</GetLastError> and L</CheckForErrors> provide methods for checking on and
-getting the last errors; also, all function calls except L</ThreadSynchronize>,
-L</GetLastError>, and L</CheckForErrors> croak when they encounter an error
+getting the most recent errors; also, all function calls except
+L</ThreadSynchronize>, L</GetLastError>, and L</CheckForErrors> croak when they
+encounter an error
 
 =back
 
-This module does not, however, provide any user-level kernels. (It does have one
+This module does not provide any user-level kernels. (It does have one
 kernel, for summing data, but don't use it; it's not very well written.) It is
 hoped this will provide a base for managing data, so that later CUDA modules
 can focus on writing kernels.
@@ -460,7 +470,7 @@ represented as an integer.
 
 =item Input
 
-a piddle or a packed Perl scalar with data that you want copied to the device
+host-side memory with data that you want copied to the device
 
 =item Output
 
@@ -473,22 +483,26 @@ To just create memory on the device without copying it, see L</Malloc>. This is
 just a wrapper for L</Malloc> and L</Transfer>, so if you get any errors, see
 those functions for error-message details.
 
-=head2 Malloc (bytes or packed-array or piddle)
+=head2 Malloc (bytes or packed-array or host-side memory object)
 
-Unlike L</MallocFrom>, this can take either an integer with the desired number
-of bytes to allocate, or a packed scalar with the length that you want to
-allocate on the device. In other words, C<Malloc($N_bytes)> will allocate
-C<$N_bytes> on the device, whereas C<Malloc($packed_array)> will allocate enough
-memory on the device to hold the data in C<$packed_array>. The second form is
-useful when you have a scalar of the appropriate length, but which you do not
+In addition to a packed array or an object that manages host-side memory (which
+are the only options for L</MallocFrom>), this function can also take an integer
+with the desired number of bytes to allocate. In other words,
+C<Malloc($N_bytes)> will allocate C<$N_bytes> on the device, whereas
+C<Malloc($packed_array)> will allocate enough memory on the device to hold the
+data in C<$packed_array>. C<Malloc($host_memory_object> uses the object's 
+C<nbytes> function to determine how many bytes to allocate on the divice.
+
+Allocating device memory based on the size of a packed scalar or memory object
+is useful when you have a scalar of the appropriate length, but which you do not
 intend to actually copy to the device. (For example, you need memory on the
 device to hold the *output* of a kernel invocation.) To copy the contents of
-your packed array, use L</MallocFrom>.
+your packed array in tandem with the allocation, use L</MallocFrom>.
 
 Like L</MallocFrom>, this returns a scalar holding the pointer to the
 location in the device memory represented as an integer. Note that this does
 not accept a sizeof-string, but you can call the L</Sizeof> function explicitly
-if you want to use it.
+if you want to specify one.
 
 =over
 
@@ -496,7 +510,7 @@ if you want to use it.
 
 an integer with the number of desired bytes,
 or a packed Perl scalar of the desired length,
-or a piddle with the desired number and type of elements
+or an object with the desired number and type of elements
 
 =item Output
 
@@ -504,9 +518,15 @@ a scalar integer holding the pointer location of the device memory
 
 =back
 
-If this encounters trouble, it will croak saying:
+If this encounters trouble, it will croak saying either
+
+ Cannot call Malloc in void context.
+
+which means you're ignoring the return value (bad for memory leaks), or
 
  Unable to allocate <number> bytes on the device: <reason>
+
+which means you were unable to allocate memory on the device, as explained.
 
 Usage example:
 
@@ -521,7 +541,7 @@ Usage example:
  # Holds 20 bytes:
  $dev_ptr1 = Malloc(20);
  # Holds 45 doubles:
- $dev_ptr2 = Malloc(Sizeof('45 d'));
+ $dev_ptr2 = Malloc(Sizeof(d => 45));
  
  # PDL example:
  my $data = sequence(20);
@@ -546,14 +566,22 @@ none
 
 =back
 
-If this encounters trouble, it will croak saying:
+This may croak for a few reasons. The most generic reason is this:
 
  Unable to free memory on the device: <reason>
 
+Another reason for death would be:
+
+ Argument <number> in the list looks like an object of type <type>,
+ which does not appear to mimic device memory
+
+which means you passed an object to C<Free> that does not know how to minic
+device memory.
+
 Good practice dictates that you should have a call to C<Free> for every call to
-L</Malloc> or L</MallocFrom>. In order to keep yourself from forgetting about
-this, for simple scripts I recommend putting your calls to C<Free> in C<END>
-blocks immediately after your calls to L</Malloc>:
+L</Malloc> or L</MallocFrom>. For simple scripts, you might want to consider
+putting your calls to C<Free> in C<END> blocks immediately after your calls to
+L</Malloc>:
 
  my $position = Malloc($double_size * $array_length);
  my $velocity = Malloc($double_size * $array_length);
@@ -562,13 +590,13 @@ blocks immediately after your calls to L</Malloc>:
  }
 
 One final note: C<Free> is not magical. If you actually copy the pointer address
-to another variable, you will encounter trouble. This is most likely to crop
-up if you store an offset in a seperate variable (see L</Offset>):
+to another variable, you will encounter trouble.
+working in here somewhere
 
  # allocate device-side memory:
  my $dev_ptr = Malloc($double_size * $array_length);
  # get the pointer value to the third element:
- my $dev_ptr_third_element = Offset($dev_ptr, '2d');
+ my $dev_ptr_third_element = $dev_ptr + Sizeof(d => 2);
  # do stuff
  ...
  # Free the device memory:
@@ -671,48 +699,6 @@ good strings for C<Sizeof>:
  $bytes = Sizeof('20 d');
  # the number of bytes in an N-element character array:
  $bytes = Sizeof("$N c");
-
-=head2 Offset (device-pointer, bytes or sizeof-string)
-
-A somewhat slow and verbose but hopefully clear and forward-compatible method
-for computing a pointer offset. Suppose you want to transfer data starting from
-the fifth element of a device array of floats. You could hard-code like so:
-
- Transfer($dev_ptr + 20 => $result);
-
-That uses a magic number. Use C<Offset> to clarify the meaning of your code:
-
- Transfer(Offset($dev_ptr => '5f') => $result)
-
-You can simply specify the number of bytes, if you know them; otherwise, you
-can specify a string that L</Sizeof> knows how to parse, and C<Offset> will get
-the proper size that way.
-
-Some examples should make this clearer:
-
- # Get the address of the fifth element of a double array:
- $dev_fifth = Offset($dev_ptr => '5d');
- # Get the offset of the nth element of a char array, where
- # the offset is stored in the variable $offset:
- $dev_offset_ptr = Offset($dev_ptr => "$offset c");
- # Since chars are always one byte, you could just specify
- # the number of bytes, like this:
- $dev_offset_ptr = Offset($dev_ptr => $offset);
-
-=over
-
-=item Input
-
-the initial pointer (an integer) and an integer offset or a sizeof-string
-
-=item Output
-
-a pointer value offset from the original by the desired amount
-
-=back
-
-This does not throw any errors itself, but if you specify an erroneous
-sizeof-string, L</Sizeof> will throw an error.
 
 =head2 SetSize (perl-scalar, bytes or sizeof-string)
 
