@@ -4,7 +4,7 @@ use Test::More tests => 25;
 
 # Load CUDA::Min::Tests, which provides functions to facilitate testing
 # kernel invocations:
-use CUDA::Min ':all';
+use CUDA::Min;
 use CUDA::Min::Tests;
 
 use strict;
@@ -13,11 +13,11 @@ use warnings;
 # First make sure that non-failures are correctly handled:
 my $string = GetLastError;
 is($string, 'no error', "With no error, GetLastError should return 'no error'");
-ok(not (CheckForErrors), 'CheckForErrors should return false when there are none');
-ok($@ eq '', 'CheckForErrors does not set $@ when there are no problems');
+ok(not (ThereAreCudaErrors), 'ThereAreCudaErrors should return false when there are none');
+ok($@ eq '', 'ThereAreCudaErrors does not set $@ when there are no problems');
 # Make sure the kernel that's supposed to always succeed does, in fact, succeed:
 CUDA::Min::Tests::succeed_test();
-ok(not (defined CheckForErrors), 'succeed_test does not set a CUDA error');
+ok(not (defined ThereAreCudaErrors), 'succeed_test does not set a CUDA error');
 
 # Create a collection of values to sum and copy them to the device:
 my $N_elements = 1024;
@@ -66,19 +66,19 @@ Free($dev_ptr);
 # Run the kernel that is supposed to fail and see what we get:
 CUDA::Min::Tests::fail_test();
 ThreadSynchronize();
-ok(CheckForErrors, "CheckForErrors returns a true value when an error occurs");
-# Check that CheckForErrors sets $@
-like($@, qr/unspecified/, 'CheckForErrors properly sets $@ on error');
+ok(ThereAreCudaErrors, "ThereAreCudaErrors returns a true value when an error occurs");
+# Check that ThereAreCudaErrors sets $@
+like($@, qr/unspecified/, 'ThereAreCudaErrors properly sets $@ on error');
 $@ = '';
 
-# After invoking CheckForErrors, further calls should return false (no errors)
+# After invoking ThereAreCudaErrors, further calls should return false (no errors)
 # until I run another kernel:
-ok(not (defined CheckForErrors), "CheckForErrors clears the last error");
+ok(not (defined ThereAreCudaErrors), "ThereAreCudaErrors clears the last error");
 
 # Check that the next kernel invocation trips an error
 CUDA::Min::Tests::succeed_test();
-ok(CheckForErrors, "Good kernels invoked after a failed kernel launch also fail");
-like($@, qr/unspecified/, 'CheckForErrors properly sets $@ on error');
+ok(ThereAreCudaErrors, "Good kernels invoked after a failed kernel launch also fail");
+like($@, qr/unspecified/, 'ThereAreCudaErrors properly sets $@ on error');
 $@ = '';
 
 # Check the return value of GetLastError:

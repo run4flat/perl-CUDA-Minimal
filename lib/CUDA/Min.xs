@@ -55,16 +55,18 @@ _malloc(SV * data_SV)
 
 void
 _transfer(SV * src_SV, SV * dst_SV, ...)
-	PROTOTYPE: $$;$
+	PROTOTYPE: $$;$$
 	CODE:
 		void * dst_ptr = 0;
 		void * src_ptr = 0;
 		size_t length = 0;
+		size_t host_offset = 0;
 		size_t host_length = 0;
 		enum cudaMemcpyKind kind;
 		
-		// Get the specified length, if they passed it in:
-		if (items == 3) length = (size_t)SvIV(ST(2));
+		// Get the specified length and host offset if they passed it in:
+		if (items > 2) length = (size_t)SvIV(ST(2));
+		if (items > 3) host_offset = (size_t)SvIV(ST(2));
 		
 		// Determine if either of the two SVs are the host memory:
 		if (SvTYPE(dst_SV) == SVt_PV && SvTYPE(src_SV) == SVt_PV) {
@@ -76,22 +78,32 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 		else if (SvTYPE(dst_SV) == SVt_PV) {
 			// Looks like the destination is host memory.
 			kind = cudaMemcpyDeviceToHost;
-			host_length = (size_t)SvCUR(dst_SV);
+			host_length = (size_t)SvCUR(dst_SV) - host_offset;
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
-			dst_ptr = SvPVX(dst_SV);
+			dst_ptr = SvPVX(dst_SV) + host_offset;
+			// Make sure the offset is shorter than the host length:
+			if (host_length <= 0)
+				Perl_croak(aTHX_ "Host offset must be less than the host's length");
 		}
 		else if (SvTYPE(src_SV) == SVt_PV) {
 			// Looks like the source is host memory.
 			kind = cudaMemcpyHostToDevice;
-			host_length = (size_t)SvCUR(src_SV);
-			src_ptr = SvPVX(src_SV);
+			host_length = (size_t)SvCUR(src_SV) - host_offset;
+			src_ptr = SvPVX(src_SV) + host_offset;
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
+			// Make sure the offset is shorter than the host length:
+			if (host_length <= 0)
+				Perl_croak(aTHX_ "Host offset must be less than the host's length");
 		}
 		else {
 			// Looks like both the source and destination are device pointers.
 			kind = cudaMemcpyDeviceToDevice;
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
+			if (host_offset > 0) {
+				Perl_croak(aTHX_ "Host offsets are not allowed for %s"
+						, "device-to-device transfers");
+			}
 		}
 		
 		// Make sure that they provided a length of some sort

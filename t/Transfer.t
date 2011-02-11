@@ -1,7 +1,7 @@
 # A collection of tests for the Transfer function
 
 use Test::More tests => 21;
-use CUDA::Min ':all';
+use CUDA::Min;
 use strict;
 use warnings;
 

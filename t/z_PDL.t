@@ -13,7 +13,7 @@ BEGIN {
 		plan skip_all => 'PDL must be installed for the PDL tests';
 	}
 	else {
-		plan tests => 8;
+		plan tests => 9;
 	}
 }
 use PDL::NiceSlice;
@@ -72,7 +72,12 @@ $should_be(0:3) .= $should_be(2:5);
 ok(all($new_data == $should_be)
 	, "Transfer from slice modified only the memory it was supposed to");
 
-# Try to Copy the revised data to the memory location
+# Copy data back to a slice:
+$should_be = sequence(4) + 2;
+$data(12:15)->get_from($dev_ptr);
+# See if the data successfully transfered:
+ok(all($data(12:15) == $should_be), "Transfer to a slice works")
+	or diag("data was " . $data(12:15) . " and it should have been $should_be");
 
 # Clean up:
 Free($dev_ptr);

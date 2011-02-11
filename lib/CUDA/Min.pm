@@ -4,7 +4,7 @@ use 5.010001;
 use strict;
 use warnings;
 use bytes;
-use Carp 'croak';
+use Carp;
 
 # Needed to distinguish refs from objects
 use attributes 'reftype';
@@ -13,25 +13,18 @@ require Exporter;
 
 our @ISA = qw(Exporter);
 
-# Items to export into callers namespace by default. Note: do not export
-# names by default without a very good reason. Use EXPORT_OK instead.
-# Do not simply export all your public functions/methods/constants.
-
-# This allows declaration	use CUDA::Min ':all';
-# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
-# will save memory.
-our %EXPORT_TAGS = ( 'all' => [ qw(
-		Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError SetSize
-		Sizeof CheckForErrors
-	) ],
+our %EXPORT_TAGS = (
+	'error' => [qw(ThereAreCudaErrors GetLastError)],
+	'memory' => [qw(Free Malloc MallocFrom Transfer)],
+	'util' => [qw(SetSize Sizeof)],
+	'sync' => [qw(ThreadSynchronize)],
 );
 
-our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+our @EXPORT_OK = ( @{ $EXPORT_TAGS{error} }, @{ $EXPORT_TAGS{memory} },
+		@{ $EXPORT_TAGS{util}}, @{ $EXPORT_TAGS{sync} }
+		);
 
-our @EXPORT = qw(
-	Free Malloc MallocFrom Transfer ThreadSynchronize GetLastError CheckForErrors
-	Sizeof
-);
+our @EXPORT = ( @EXPORT_OK );
 
 our $VERSION = '0.01';
 
@@ -44,271 +37,13 @@ sub is_an_object ($) {
 	return ref($_[0]) and ref($_[0]) ne reftype($_[0])
 }
 
-# Just a wrapper for the _free function call, the 'internal' function that
-# actually calls cudaFree.
-sub Free {
-	my @errors;
-	# If called from cleanup code (from a previous croak or die), the caller
-	# needs to save $@ on its own:
-	$@ = '';
-	
-	# Run through all of the arguments and free them:
-	my $i = 0;
-	POINTER: for(@_) {
-		# Now $_ refers to the actual passed scalar, which is supposed to be a
-		# dev pointer.
-		
-		# Use these to capture troubles with free, but still work on the
-		# rest of the device memory:
-		eval {
-			if (is_an_object $_) {
-				# If it's an object that knows how to free itself, let it free
-				# itself:
-				if ($_->can('free_dev_memory')) {
-					$_->free_dev_memory;
-					next POINTER;
-				}
-				# If it's an object that at least knows about device memory,
-				# retrieve that and free it.
-				elsif ($_->can('get_dev_ptr')) {
-					_free($_->get_dev_ptr);
-				}
-				# Otherwise, it's an object I don't know how to work with. Throw
-				# an error (which is caught 10 lines below)
-				else {
-					die("Argument $i in the list looks like an object of type "
-							. ref($_)
-							. ", which does not appear to mimic device memory\n");
-				}
-			}
-			# If it looks like a scalar, then just call _free on it:
-			elsif (not defined $_) {
-				die "Argument $i not defined\n";
-			}
-			else {
-				_free($_);
-			}
-			$i++;
-		};
-		# Collect all the errors, which I will report at the end:
-		if ($@) {
-			# Clean up any line references since I will be re-croaking the
-			# error, with an updated line reference:
-			$@ =~ s/ at .*$//;
-			push @errors, $@;
-			$@ = '';
-		}
-	}
-	# Croak if there are errors:
-	if (@errors) {
-		croak(join("\n", @errors));
-	}
-}
-
-# A wrapper for the _malloc function that checks if an argument is an object.
-# If so, it gets the length and sends that value to _malloc:
-sub Malloc ($) {
-	croak('Cannot call Malloc in a void context') unless defined wantarray;
-	# Special object processing:
-	if (is_an_object $_[0]) {
-		my $object = shift;
-		if (my $func = $object->can('nbytes')) {
-			return _malloc($func->($object));
-		}
-		else {
-			croak('Attempting to allocate memory from an object of type '
-				. ref($object) . ' but that class does not know how to say nbytes');
-		}
-	}
-	# otherwise, just call _malloc, which will assume it's a packed string and
-	# go from there.
-	return _malloc($_[0]);
-}
-
-# A nice one-two punch to allocate memory on the device and copy the values
-sub MallocFrom ($) {
-	croak('Cannot call MallocFrom in void context') unless defined wantarray;
-	my $dev_ptr = Malloc($_[0]);
-	Transfer($_[0] => $dev_ptr);
-	return $dev_ptr;
-}
-
-# A function that wraps the _transfer function, or delegates the transfer if it
-# gets an object as one (or both) of the arguments:
-sub Transfer ($$;$) {
-	# If the first argument is an object and it mimics device memory, get the
-	# device memory and call Transfer again:
-	if (is_an_object($_[0]) and $_[0]->can('get_dev_ptr')) {
-		my $object = shift;
-		unshift @_, $object->get_dev_ptr;
-		goto &Transfer;
-	}
-	# Repeat for the second argument:
-	if (is_an_object($_[1]) and $_[1]->can('get_dev_ptr')) {
-		splice @_, 1, 1, $_[1]->get_dev_ptr;
-		goto &Transfer;
-	}
-	
-	# If I'm here, I know that any mimicking of the device memory should have
-	# been handled. Now I look to see if anything mimics host memory and call
-	# that object's send_to function:
-	if (is_an_object($_[0])) {
-		my $send_to_func = $_[0]->can('send_to');
-		croak("First argument to Transfer is an object, but it doesn't mimic either device or host memory")
-			unless $send_to_func;
-		goto &$send_to_func;
-	}
-	if (is_an_object($_[1])) {
-		my $get_from_func = $_[1]->can('get_from');
-		croak("Second argument to Transfer is an object, but it doesn't mimic either device or host memory")
-			unless $get_from_func;
-		# Rearrange the elements before going to the function:
-		unshift @_, splice (@_, 1, 1);
-		goto &$get_from_func;
-	}
-	
-	# If I've gotten here, then none of the arguments are objects, they're all
-	# scalars. I can just go to the underlying _transfer function, which will
-	# handle everything else from here:
-	goto &_transfer;
-}
-
-# A function that determines the number of bytes to which its argument refers.
-# Sizeof can be an object that mimics host memory, or it can be a packed scalar,
-# or it can be a spec string.
-sub Sizeof ($;$) {
-	# If it's an object, return the value of its nbytes method, or croak if
-	# no such method exists:
-	if (@_ == 1 and is_an_object($_[0])) {
-		my $obj = shift;
-		return $obj->nbytes if $obj->can('nbytes');
-		croak("Argument to Sizeof is an object of type " . ref($obj)
-					. ", but it does not mimic host memory");
-	}
-	# Otherwise if they supplied only one argument, assume it's a packed string
-	# and just return the number of bytes:
-	elsif (@_ == 1) {
-		return length $_[0];
-	}
-	# Otherwise they supplied two arguments, so process it like a size spec.
-	$@ = '';
-	my ($type, $number) = @_;
-	$number =~ /^\d+$/
-		or croak("Bad size spec: second argument ($number) must be a number");
-	# Compute the sizeof, in an eval, so if the pack string is bad, I can say so
-	my $sizeof = eval{ length pack $type, 5 };
-	return $number * $sizeof unless $@;
-	
-	# If pack croaked, send an error saying so:
-	croak("Bad pack-string '$type' in size specifiation") if $@;
-}
-
-# A function to ensure that the given scalar has the correct length
-sub SetSize ($$;$) {
-	# Unpack the length. If it's a Sizeof spec, then pop off both arguments
-	# and call Sizeof to get them; otherwise, assume the single argument is
-	# the length in bytes:
-	my $new_length = pop;
-	if (@_ == 2) {
-		$new_length = Sizeof($_[1] => $new_length);
-	}
-
-	# Delegate object methods:
-	if (is_an_object($_[0])) {
-		my $object = shift;
-		if ($object->can('n_bytes')) {
-			return $object->n_bytes($new_length);
-		}
-		else {
-			croak("SetSize called on an object of type " . ref($object)
-				. ", but it does not mimic host memory");
-		}
-	}
-	
-	# Make sure that we're working with an initialized value and get the length:
-	$_[0] = '' if not defined $_[0];
-	my $cur_length = length $_[0];
-
-	# If it's already the right length, don't do anything:
-	return if ($cur_length == $new_length);
-	
-	# If it's too short, use vec to increase the length:
-	if ($cur_length < $new_length) {
-		vec($_[0], $new_length - 1, 8) = 0;
-		return;
-	}
-	
-	# If it's too long, trim it back (I believe this is efficient, but I'm not
-	# sure):
-	substr ($_[0], $new_length) = '';
-	
-	# Finish by returning the new length, in bytes:
-	return $new_length;
-}
-
-# Checks for errors. Returns the undefined value if there were no errors. If
-# there were errors, it returns the error string, and also sets $@ to the same
-# error string.
-sub CheckForErrors () {
-	my $error = GetLastError();
-	return if $error =~ /no error/;
-	$@ = $error;
-	return $error;
-}
-
-require XSLoader;
-XSLoader::load('CUDA::Min', $VERSION);
-
-
-
-####################
-# PDL OO Interface #
-####################
-
-sub PDL::nbytes {
-	my $self = shift;
-	my $new_length = shift;
-	croak("Changing the size of a piddle with SetSize or nbytes is not implemented")
-		if (defined $new_length);
-	
-	return PDL::Core::howbig($self->get_datatype) * $self->nelem;
-}
-
-sub PDL::send_to {
-	my ($self, $dev_ptr, ) = @_;
-	
-	eval{ Transfer(${$self->get_dataref} => $dev_ptr) };
-	if ($@) {
-		# If I encountered an error, clean up the message and recroak:
-		$@ =~ s/ at .*Min.pm line \d+\.\n//;
-		croak($@);
-	}
-	$self->upd_data;
-	return $self;
-}
-
-sub PDL::get_from {
-	my ($self, $dev_ptr) = @_;
-	eval{ Transfer($dev_ptr => ${$self->get_dataref}) };
-	if ($@) {
-		# If I encountered an error, clean up the message and recroak:
-		$@ =~ s/ at .*Min.pm line \d+\.\n//;
-		croak($@);
-	}
-	$self->upd_data;
-	return $self;
-}
-
-1;
-__END__
-
 =head1 NAME
 
 CUDA::Min - A minimal set of Perl bindings for CUDA.
 
 =head1 SYNOPSIS
 
- use CUDA::Min';
+ use CUDA::Min;
  # Create a host-side array of 10 sequential
  # single-precision floating-point values:
  my $N_values = 10;
@@ -386,10 +121,9 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
  my $randoms = $data->random;
  
  # Copy the random values to the device:
- Transfer($randoms => $dev_ptr2);
- 
- # Using send_to PDL method:
  $randoms->send_to($dev_ptr2);
+ # the traditional function syntax works, too:
+ Transfer($randoms => $dev_ptr2);
  
  # Copy the first five random values back
  # into elements 5-10 of the original array:
@@ -402,7 +136,7 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
 
 This module provides what I consider to be a decent but minimal amount of
 functionality to get Perl and CUDA talking together nicely, with an emphasis on
-nicely. It works with plain-ol' packed Perl scalar, and it works nicely with
+nicely. It works with plain-ol' packed Perl scalars, and it works nicely with
 PDL. (However, it does not require that you have PDL installed to use it.)
 
 It does not try to wrap all possible CUDA-C functions. I said nice, not
@@ -412,8 +146,6 @@ awareness, so that you can create object interfaces to device and host memory
 and pass those objects to functions like C<MallocFrom>, C<Free>, and C<Transfer>.
 If you would like to make objects that mimic device or host memory, see
 L</Object Oriented Interfaces> below.
-
-working here - write documentation for object-oriented interfaces.
 
 The functions in this module provide basic methods for doing the following:
 
@@ -435,7 +167,8 @@ standard chaining syntax common to PDL
 =item consistent size determination
 
 Whether dealing with packed scalars, piddles, or some other object that handles
-device memory, L</Sizeof> determines the number of bytes that variable can hold
+device memory, L</Sizeof> determines the number of bytes that variable can hold,
+or allows you to compute the size from a succinct expression
 
 =item thread synchronization
 
@@ -444,17 +177,17 @@ is important for benchmarking
 
 =item error checking
 
-L</GetLastError> and L</CheckForErrors> provide methods for checking on and
+L</GetLastError> and L</ThereAreCudaErrors> provide methods for checking on and
 getting the most recent errors; also, all function calls except
-L</ThreadSynchronize>, L</GetLastError>, and L</CheckForErrors> croak when they
-encounter an error
+L</ThreadSynchronize>, L</GetLastError>, and L</ThereAreCudaErrors> croak when
+they encounter an error
 
 =back
 
 This module does not provide any user-level kernels. (It does have one
 kernel, for summing data, but don't use it; it's not very well written.) It is
 hoped this will provide a base for managing data, so that later CUDA modules
-can focus on writing kernels.
+can focus on writing kernels rather than managing memory.
 
 =head1 FUNCTIONS
 
@@ -479,30 +212,46 @@ initialized device memory
 
 =back
 
-To just create memory on the device without copying it, see L</Malloc>. This is
-just a wrapper for L</Malloc> and L</Transfer>, so if you get any errors, see
-those functions for error-message details.
+To just create memory on the device without copying it, see L</Malloc>.
+
+If you don't have a variable that will hold the result of the function call,
+C<MallocFrom> will croak saying
+
+ Cannot call MallocFrom in void context
+
+If you get other errors, see L</Malloc> and L</Transfer>, for which this
+function is really just a wrapper.
+
+=cut
+
+# A nice one-two punch to allocate memory on the device and copy the values
+sub MallocFrom ($) {
+	croak('Cannot call MallocFrom in void context') unless defined wantarray;
+	my $dev_ptr = Malloc($_[0]);
+	Transfer($_[0] => $dev_ptr);
+	return $dev_ptr;
+}
 
 =head2 Malloc (bytes or packed-array or host-side memory object)
 
 In addition to a packed array or an object that manages host-side memory (which
 are the only options for L</MallocFrom>), this function can also take an integer
-with the desired number of bytes to allocate. In other words,
+with the desired number of bytes to allocate. (L</Sizeof> can be very helpful
+for calculating the number of bytes based on type.) In other words,
 C<Malloc($N_bytes)> will allocate C<$N_bytes> on the device, whereas
 C<Malloc($packed_array)> will allocate enough memory on the device to hold the
-data in C<$packed_array>. C<Malloc($host_memory_object> uses the object's 
+data in C<$packed_array>. C<Malloc($host_memory_object)> uses the object's 
 C<nbytes> function to determine how many bytes to allocate on the divice.
 
 Allocating device memory based on the size of a packed scalar or memory object
 is useful when you have a scalar of the appropriate length, but which you do not
 intend to actually copy to the device. (For example, you need memory on the
-device to hold the *output* of a kernel invocation.) To copy the contents of
+device to hold the I<output> of a kernel invocation.) To copy the contents of
 your packed array in tandem with the allocation, use L</MallocFrom>.
 
 Like L</MallocFrom>, this returns a scalar holding the pointer to the
-location in the device memory represented as an integer. Note that this does
-not accept a sizeof-string, but you can call the L</Sizeof> function explicitly
-if you want to specify one.
+location in the device memory represented as an integer, and it will croak if
+called in void context.
 
 =over
 
@@ -524,13 +273,21 @@ If this encounters trouble, it will croak saying either
 
 which means you're ignoring the return value (bad for memory leaks), or
 
+ Attempting to allocate memory from an object of type
+ <type> but that class does not know how to say nbytes
+
+which means that you supplied an object that does not have the C<nbytes>
+method. That means you're probably using the wrong object. Finally, you could
+get this error:
+
  Unable to allocate <number> bytes on the device: <reason>
 
-which means you were unable to allocate memory on the device, as explained.
+which happens when CUDA was unable to allocate memory on the device. (The reason
+is CUDA's reason, not mine.)
 
 Usage example:
 
- use CUDA::Min ':all';
+ use CUDA::Min;
  my $data = pack('f*', 1..10);
  my $dev_input_ptr = MallocFrom($data);
  my $dev_output_ptr = Malloc($data);
@@ -547,18 +304,40 @@ Usage example:
  my $data = sequence(20);
  my $dev_ptr = Malloc($data);
 
+=cut
+
+sub Malloc ($) {
+	croak('Cannot call Malloc in a void context') unless defined wantarray;
+	# Special object processing:
+	if (is_an_object $_[0]) {
+		my $object = shift;
+		if (my $func = $object->can('nbytes')) {
+			return _malloc($func->($object));
+		}
+		else {
+			croak('Attempting to allocate memory from an object of type '
+				. ref($object) . ' but that class does not know how to say nbytes');
+		}
+	}
+	# otherwise, just call _malloc, which will assume it's a packed string and
+	# go from there.
+	return _malloc($_[0]);
+}
+
 =head2 Free (device-pointer, device-pointer, ...)
 
 Frees the device's memory at the associated pointer locations. You can provide
 a list of pointers to be freed. If all goes well, this function finishes by
 modifying your scalars in-place, setting them to zero. This way, if you call
-C<Free> on the same perl scalar twice, nothing bad should happen.
+C<Free> on the same perl scalar twice, nothing bad should happen. This also
+accepts objects that mimic device memory.
 
 =over
 
 =item Input
 
-Perl scalars with containing pointers obtained from L</Malloc> or L</MallocFrom>.
+Perl scalars containing pointers obtained from L</Malloc> or L</MallocFrom>,
+or objects that mimic device memory.
 
 =item Output
 
@@ -570,13 +349,21 @@ This may croak for a few reasons. The most generic reason is this:
 
  Unable to free memory on the device: <reason>
 
-Another reason for death would be:
+This is a CUDA error, and usually is only a problem if you supplied a bad
+memory location. Another reason for death would be:
 
  Argument <number> in the list looks like an object of type <type>,
  which does not appear to mimic device memory
 
 which means you passed an object to C<Free> that does not know how to minic
 device memory.
+
+You may also get this warning:
+
+ Argument <number> not defined
+
+which means you sent and undefined value as an argument to C<Free>. It's
+harmless, from the standpoint of C<Free>, but may indicate a bug in your code.
 
 Good practice dictates that you should have a call to C<Free> for every call to
 L</Malloc> or L</MallocFrom>. For simple scripts, you might want to consider
@@ -591,10 +378,9 @@ L</Malloc>:
 
 One final note: C<Free> is not magical. If you actually copy the pointer address
 to another variable, you will encounter trouble.
-working in here somewhere
 
  # allocate device-side memory:
- my $dev_ptr = Malloc($double_size * $array_length);
+ my $dev_ptr = Malloc(Sizeof(d => $array_length));
  # get the pointer value to the third element:
  my $dev_ptr_third_element = $dev_ptr + Sizeof(d => 2);
  # do stuff
@@ -607,31 +393,95 @@ working in here somewhere
  # Best to be safe and set it to zero, too:
  $dev_ptr_third_element = 0;
 
-=head2 Transfer (source => destination, [bytes])
+=cut
+
+# This used to be a rather trivial wrapper for _free, but that is no longer
+# the case. At any rate, it is the public interface for memory deallocation.
+sub Free {
+	my @errors;
+	# If called from cleanup code (from a previous croak or die), the caller
+	# needs to save $@ on its own:
+	$@ = '';
+	
+	# Run through all of the arguments and free them:
+	my $i = 0;
+	POINTER: for(@_) {
+		# Now $_ refers to the actual passed scalar, which is supposed to be a
+		# dev pointer.
+		
+		# Use these to capture troubles with free, but still work on the
+		# rest of the device memory:
+		eval {
+			if (is_an_object $_) {
+				# If it's an object that knows how to free itself, let it free
+				# itself:
+				if ($_->can('free_dev_memory')) {
+					$_->free_dev_memory;
+					next POINTER;
+				}
+				# If it's an object that at least knows about device memory,
+				# retrieve that and free it.
+				elsif ($_->can('get_dev_ptr')) {
+					_free($_->get_dev_ptr);
+				}
+				# Otherwise, it's an object I don't know how to work with. Throw
+				# an error (which is caught 10 lines below)
+				else {
+					die("Argument $i in the list looks like an object of type "
+							. ref($_)
+							. ", which does not appear to mimic device memory\n");
+				}
+			}
+			# If it looks like a scalar, then just call _free on it:
+			elsif (not defined $_) {
+				carp("Argument $i not defined\n");
+			}
+			else {
+				_free($_);
+			}
+			$i++;
+		};
+		# Collect all the errors, which I will report at the end:
+		if ($@) {
+			# Clean up any line references since I will be re-croaking the
+			# error, with an updated line reference:
+			$@ =~ s/ at .*$//;
+			push @errors, $@;
+			$@ = '';
+		}
+	}
+	# Croak if there are errors:
+	if (@errors) {
+		croak(join("\n", @errors));
+	}
+}
+
+=head2 Transfer (source => destination, [bytes, offset])
 
 A simple method to move data around. The third argument, the number of bytes to
 copy, is optional unless both the source and the destination are pointers to
 memory on the device. If you don't specify the number of bytes you want copied
-and either the source or the destination is a packed array, C<Transfer> will
-copy an amount equal to the length of the array.
+and either the source or the destination is host memory, C<Transfer> will copy
+as much data as the host memory can accomodate. The offset is optional, except
+that it is not allowed for device-to-device transfers.
+
+The use of the fat comma is not required, but is strongly encouraged.
 
 C<Transfer> determines which scalar is the host and which is the pointer to the
-device by examining the variables' internals. A packed array will always 'look'
-like a character string, whereas a pointer will usually 'look' like an integer.
-And of course, a piddle obviously looks like a piddle.
+device by examining the variables' internals. Objects are always blessed
+references, a packed array will always 'look' like a character string, and a
+pointer will usually 'look' like an integer.
 
 =over
 
 =item Input
 
-a Perl scalar with the data source, a Perl scalar with the destination, and an
-optional number of bytes
+the source, the destination, an optional number of bytes, an optional host
+offset in bytes
 
 =item Output
 
-none, although if the destination is a packed array or piddle, its contents will
-be modified; if the destination is a chunk of device memory, its contents will
-be modified
+none, although the destination's data (host or device) will be modified
 
 =back
 
@@ -645,16 +495,32 @@ Also, you cannot use C<Transfer> to copy one Perl scalar to another:
  Transfer requires at least one of the arguments to be a device pointer
  but it looks like both are host arrays
 
-You'll get that if both of your arguments is a packed scalar, or if one is a
-packed scalar and the other is a piddle. If both are a piddle, you'll see this:
-
- You cannot call Transfer on two piddle values
-
 If you try to copy more data to the host than it can hold, or if you try to copy
 more data from the host than it currently holds (which only happens when you
 specify a number of bytes and it's too large), you'll get this error:
 
  Attempting to transfer more data than the host can accomodate
+
+(You might complain and say, "Why doesn't it Do What I Mean and extend the
+scalar to accomodate the length?" Such behavior could lead to very large yet
+silent memory allocations, which I would rather avoid. But I might consider
+changing this in the future, so you should not depend on the fact that it does
+not modify the host memory. If you do, let me know and I'll take that into
+consideration before changing anything.)
+
+If you try to Transfer data from an object that does not know how to
+C<get_dev_ptr> (mimic device memory) or C<send_to> (mimic host memory), you
+will get the error
+
+ First argument to Transfer is an object, but
+ it doesn't mimic either device or host memory
+
+Similarly, if you try to Transfer data to an object that does not know how to
+C<get_dev_ptr> (mimic device memory) or C<get_from> (mimic host memory), you
+will get the error
+
+ Second argument to Transfer is an object, but
+ it doesn't mimic either device or host memory
 
 The one remaining error happens when memory cannot be copied. It's an error
 thrown by CUDA itself, and it's probably due to using an invalid pointer or
@@ -662,25 +528,120 @@ something. The error looks like this:
 
  Unable to copy memory: <reason>
 
-=head2 Sizeof (sizeof-string)
+working here - new errors:
 
-Computes the size of the given specification. The specification has two parts.
-The second part is the Perl L<pack> type (f for float, d for double, c for char,
-etc), and the first is the number of copies you want. They can be seperated by
-an optional space for clarity. Use this to calculate the number of bytes in
-a way that makes your code clearer.
+ Host offsets are not allowed for device-to-device transfers
+ Host offset must be less than the host's length
+
+=cut
+
+# A function that wraps the _transfer function, or delegates the transfer if it
+# gets an object as one (or both) of the arguments:
+sub Transfer ($$;$$) {
+	# If the first argument is an object and it mimics device memory, get the
+	# device memory and call Transfer again:
+	if (is_an_object($_[0]) and $_[0]->can('get_dev_ptr')) {
+		my $object = shift;
+		unshift @_, $object->get_dev_ptr;
+		goto &Transfer;
+	}
+	# Repeat for the second argument:
+	if (is_an_object($_[1]) and $_[1]->can('get_dev_ptr')) {
+		splice @_, 1, 1, $_[1]->get_dev_ptr;
+		goto &Transfer;
+	}
+	
+	# If I'm here, I know that any mimicking of the device memory should have
+	# been handled. Now I look to see if anything mimics host memory and call
+	# that object's send_to function:
+	if (is_an_object($_[0])) {
+		my $send_to_func = $_[0]->can('send_to');
+		croak("First argument to Transfer is an object, but it doesn't mimic either device or host memory")
+			unless $send_to_func;
+		goto &$send_to_func;
+	}
+	if (is_an_object($_[1])) {
+		my $get_from_func = $_[1]->can('get_from');
+		croak("Second argument to Transfer is an object, but it doesn't mimic either device or host memory")
+			unless $get_from_func;
+		# Rearrange the elements before going to the function:
+		unshift @_, splice (@_, 1, 1);
+		goto &$get_from_func;
+	}
+	
+	# If I've gotten here, then none of the arguments are objects, they're all
+	# scalars. I can just go to the underlying _transfer function, which will
+	# handle everything else from here:
+	goto &_transfer;
+}
+
+=head2 Sizeof (object or specification)
+
+Computes the size of the given object or specification. If you want to know the
+number of bytes that a packed array has, use this function. If you want to know
+the number of bytes in a 20-element integer array, use this function (with
+different arguments). If you want to know the number of bytes available in
+some object that mimics host-side memory, you could say C<< $object->nbytes >>,
+or you could use this function as C<Sizeof($object)>. Basically, it's the
+get-the-size catch-all function.
 
 =over
 
 =item Input
 
-a specification string
+a packed array, or a host side memory object, or pack-type=>quantity pair of
+arguments
 
 =item Output
 
-an integer number of bytes corresponding to the specification string
+an integer number of bytes
 
 =back
+
+The usage for a packed array or host-side memory is hopefully straight-forward.
+C<Sizeof($packed_array)> will give you the number of bytes in the array, and
+similarly for an object. That is intentional, and hopefully means you can write
+code that does not have to check if the argument is an object in order to
+determine its size.
+
+The specification is a little different. In that case, you give two arguments.
+The first is the Perl L<pack> type (f for float, d for double, c for char,
+etc), and the second is the number of copies you want. Such a usage looks like
+this: C<< Sizeof(d => 20) >>, which returns the number of bytes in a 20-element
+array of doubles. That's particularly useful when you only want to transfer a
+certain amount of data, or when you need to allocate memory in
+a packed array in preparation for a transfer from the device to the host
+(using L</SetSize> together with this function, I would expect).
+
+If you have a hard time remembering the order (is it type => quantity, or 
+quantity => type?) just remember that the fat comma is intentional, and the
+order allows you to write the Sizeof spec without using any quotes when you
+C<use strict>. Compare:
+
+ use strict;
+ # WRONG order:
+ my $bytes = Sizeof(20 => 'd');
+ # RIGHT order:
+ my $bytes = Sizeof(d => 20);
+
+This may croak for a number of reasons. If you try to get the size of an object
+but the object does not know how to say C<nbytes>, you will get this error:
+
+ Argument to Sizeof is an object of type <class-name>,
+ but it does not mimic host memory
+
+That means that you are indeed using a Perl object, but it does not know how
+many bytes it can hold.
+
+On the other hand, if you specify a pack-type => quantity pair, you will get
+the following error if the quantity does not look like a number:
+
+ Bad size spec: second argument (<value>) must be a number
+
+Whatever is inside the parenthesis is what Sizeof thinks you're trying to use as
+a number, and Sizeof does not think it resembles a positive integer. Or you can
+have trouble if you use an invalid pack-type (see Perl's documentation on the
+L<pack> function):
 
 If you have a bad specification string, this will croak with the following
 message:
@@ -690,23 +651,61 @@ message:
 
 If you provided an invalid pack type, you'll see this:
 
- Bad pack-string in size specifiation <specification>
+ Bad pack-string '<type>' in size specifiation
 
-Here are some examples that will hopefully make things clear about specifying
-good strings for C<Sizeof>:
+The expression inside the quotes is what you provided. This will only trigger
+an error if Perl's pack function actually croaks while parsing it, so
+double-check your actual verion of Perl's documentation for pack if you get
+trouble here.
+
+Here are some examples that will hopefully make things clearer if you still
+don't quite understand:
 
  # the number of bytes in a 20-element double array:
- $bytes = Sizeof('20 d');
- # the number of bytes in an N-element character array:
- $bytes = Sizeof("$N c");
+ $bytes = Sizeof(d => 20);
+ # Allocate a packed-array with 30 ints:
+ SetSize(my $output, Sizeof(i => 20));
 
-=head2 SetSize (perl-scalar, bytes or sizeof-string)
+=cut
 
-A function that ensures that the perl scalar that you're using has exactly the
-length that you want. This function takes two arguments, the perl scalar whose
-length you want set and the number of bytes or sizeof-string that specifies the
-desired length. This will not change the size of a piddle, and will croak if you
-try to use it like that. C<SetSize> should only be called on packed scalars.
+sub Sizeof ($;$) {
+	# If it's an object, return the value of its nbytes method, or croak if
+	# no such method exists:
+	if (@_ == 1 and is_an_object($_[0])) {
+		my $obj = shift;
+		return $obj->nbytes if $obj->can('nbytes');
+		croak("Argument to Sizeof is an object of type " . ref($obj)
+					. ", but it does not mimic host memory");
+	}
+	# Otherwise if they supplied only one argument, assume it's a packed string
+	# and just return the number of bytes:
+	elsif (@_ == 1) {
+		return length $_[0];
+	}
+	# Otherwise they supplied two arguments, so process it like a size spec.
+	$@ = '';
+	my ($type, $number) = @_;
+	$number =~ /^\d+$/
+		or croak("Bad size spec: second argument ($number) must be a number");
+	# Compute the sizeof, in an eval, so if the pack string is bad, I can say so
+	my $sizeof = eval{ length pack $type, 5 };
+	return $number * $sizeof unless $@;
+	
+	# If pack croaked, send an error saying so:
+	croak("Bad pack-string '$type' in size specifiation") if $@;
+}
+
+=head2 SetSize (host-memory, bytes or Sizeof-spec)
+
+A function that ensures that the object or Perl scalar that you're using has
+exactly the length that you want. This function takes two or three arguments:
+the host memory whose length you want set and the number of bytes or
+the a Sizeof-compatible specification (type=>quantity) that specifies the
+desired length.
+
+I have written this so that if you call it on an object, it will call the
+object's C<nbytes> function with an argument. That is, it will try to set the
+object's length using the C<nbytes> function as a setter.
 
 =over
 
@@ -725,7 +724,7 @@ Here are some examples:
  # Create a packed array of 10 sequential doubles:
  my $data = pack 'd*', 1..10;
  # Change that array so that it holds 20 doubles (the 10 extra are automatically
- # set to zero):
+ # set to zero by Perl):
  SetSize($data, '20d');
  # Create a new array that's the same size as $data
  my $new_data;
@@ -735,9 +734,49 @@ Here are some examples:
  # Shorten $new_data so it only holds 20 ints:
  SetSize($new_data, '20 i');
 
-If you try to call this on a piddle, you will get the following error:
+=cut
 
- Cannot call SetSize on a piddle.
+sub SetSize ($$;$) {
+	# Unpack the length. If it's a Sizeof spec, then pop off both arguments
+	# and call Sizeof to get them; otherwise, assume the single argument is
+	# the length in bytes:
+	my $new_length = pop;
+	if (@_ == 2) {
+		$new_length = Sizeof($_[1] => $new_length);
+	}
+
+	# Delegate object methods:
+	if (is_an_object($_[0])) {
+		my $object = shift;
+		if ($object->can('n_bytes')) {
+			return $object->n_bytes($new_length);
+		}
+		else {
+			croak("SetSize called on an object of type " . ref($object)
+				. ", but it does not mimic host memory");
+		}
+	}
+	
+	# Make sure that we're working with an initialized value and get the length:
+	$_[0] = '' if not defined $_[0];
+	my $cur_length = length $_[0];
+
+	# If it's already the right length, don't do anything:
+	return if ($cur_length == $new_length);
+	
+	# If it's too short, use vec to increase the length:
+	if ($cur_length < $new_length) {
+		vec($_[0], $new_length - 1, 8) = 0;
+		return;
+	}
+	
+	# If it's too long, trim it back (I believe this is efficient, but I'm not
+	# sure):
+	substr ($_[0], $new_length) = '';
+	
+	# Finish by returning the new length, in bytes:
+	return $new_length;
+}
 
 =head2 ThreadSynchronize
 
@@ -756,19 +795,63 @@ thread synchronization itself will never cause errors.
 =head2 GetLastError
 
 This is a simple wrapper for C<cudaGetLastError>. It returns a string describing
-the last error. It returns exactly what CUDA tells it to say, so as of this time
+the last error. It returns exactly what CUDA tells it to say, so as of the time
 of writing, if there were no errors, it returns the string 'no errors'. It also
 clears the error so that further CUDA function calls will not croak. (But see
 L</Unspecified launch failure> below.) For a slightly more Perlish error
-checker, see L</CheckForErrors>.
+checker, see L</ThereAreCudaErrors>.
 
-=head2 CheckForErrors
+=head2 ThereAreCudaErrors
 
-Checks for CUDA errors. Returns the undefined value if there are no errors.
-Otherwise, it returns the errors string. It also sets C<$@> with the error
-string, if this was an error, so you'll want to be sure to clear that if you
-find one. Note that this does not actually croak with the error; it simply sets
-C<$@>.
+I will admit, this function is a bit odd. First I will explain the name.
+I named it this way so that the following statements reads as proper Enlish:
+
+ if (ThereAreCudaErrors) {
+     # Do some error handling.
+ }
+
+or this:
+
+ return ($the_answer) unless ThereAreCudaErrors;
+ # handle errors here and perhaps return something else
+
+In other words, if there no are errors, this function returns false. If there
+are errors, it returns true.
+
+This function has an unusual (and probably shunned) side-effect. Besides
+returning a true value when it encounters an error, it also sets C<$@> with
+a string describing the error. Note that it only sets C<$@> if there was an
+error; otherwise it does not touch C<$@>.
+
+The reason for this unusual side-effect
+is because C<ThereAreCudaErrors> uses L</GetLastError> internally to determine
+if there was an error. However, calling that function also clears the
+CUDA error state. In other words, you might have wanted to use the following:
+
+ # WRONG:
+ if (ThereAreCudaErrors) {
+     my $error_string = GetLastError;
+     # process the error...
+ }
+
+But as written the call to L</GetLastError> will always return 'no errors'.
+By setting C<$@>, C<ThereAreCudaErrors> lets you get the error string if it
+exists:
+
+ # RIGHT:
+ if (ThereAreCudaErrors) {
+     print "Got error $@... investigating\n";
+     # process the error...
+ }
+
+If you don't like clobbering C<$@>, then you probably know enough to localize
+C<$@>, or  you can simply use the following code instead:
+
+ my $error_string = GetLastError;
+ return ($the_answer) if $error_string eq 'no errors';
+
+Calling this function will clear CUDA's error status, if there was an error,
+but see L</Unspecified launch failure> below.
 
 =over
 
@@ -778,51 +861,129 @@ none
 
 =item Output
 
-C<undef> if no errors or the error string if there were; also sets C<$@> with
-the error string if there was one
+A false value if no errors or a true value if there were; also sets C<$@>
+with the error string if there was an error
 
 =back
 
-A nice idiom for error checking is this:
+=cut
 
- if (CheckForErrors) {
-     # Error handling here
-     my $error_message = $@;
-     # you could decide to croak with the error if you like:
-     croak($@);
-     # or you might decide to try to handle the error yourself:
-     ... error handling code...
-     # in which case you should finish by clearing the Perl error:
-     $@ = '';
- }
+sub ThereAreCudaErrors () {
+	my $error = GetLastError();
+	return if $error eq 'no error';
+	$@ = $error;
+	return 1;
+}
 
-Calling this function will clear CUDA's error status, if there was an error,
-but see L</Unspecified launch failure> below.
+require XSLoader;
+XSLoader::load('CUDA::Min', $VERSION);
+
+##############################
+# OBJECT ORIENTED INTERFACES #
+##############################
+
+=head1 Object Oriented Interfaces
+
+The documentation made many references to objects that mimic device or host
+memory. Objects that 'mimic' device or host memory have a handful of methods
+that C<CUDA::Min> expects to be able to call on them.
+
+=head2 Host memory
+
+A class that intends to mimc host memory needs to provide the following methods:
+
+=over
+
+=item nbytes
+
+When called without any arguments, this function should return the number of
+bytes that the host memory supports. When called with an argument, the function
+must take the argument as the new number of desired bytes and resize itself
+accordingly, or croak if that is not possible. If called with an argument, it
+should return the I<previous> number of bytes allocated.
+
+=item send_to
+
+This method should accept one or two arguments. The first is the device pointer
+or an object that mimics device memory. The second is an optional argument that
+states the number of bytes to copy. There is no required return value, though
+the PDL method returns the just-used piddle to allow for further chaining. Such
+is a common idiom in PDL.
+
+=item get_from
+
+Just as with C<send_to>, this method should accept one or two arguments. The
+first is the device pointer (or an object that mimics device memory) and the
+second is an optional number of bytes to copy to the object from the device.
+You do not have to return anything from this function, thought the PDL method
+returns the object that called it.
+
+=back
+
+=head2 Device Memory
+
+A class that intends to mimic device memory needs to provide the following
+methods:
+
+=over
+
+=item get_dev_ptr (required)
+
+Returns an integer that can be interpreted as a device pointer.
+
+=item free_dev_memory (optional)
+
+Frees device memory. If not supplied, the internal _free function will be
+called on the result of the C<get_dev_ptr> method, and should automatically set
+its argument to zero. This function should croak if it fails (the croak will be
+captured within L</Free> if it was called by L</Free>). Also, the return value
+is ignored when called by L</Free>, so you can have it return whatever you like,
+or nothing at all.
+
+=back
+
+=cut
+
+
+
+####################
+# PDL OO Interface #
+####################
 
 =head1 PDL METHODS
 
-CUDA::Min supports using piddles in place of packed scalars in most of its
-arguments (everywhere you're likely to want them, at least) and it provides two
-PDL methods for data transfer, L</send_to> and L</get_from>. Both of them take
-only one argument: the device memory location.
+As an illustration of an object-oriented interface, CUDA::Min supports using
+piddles in its arguments. It provides two
+PDL methods for data transfer, L</send_to> and L</get_from>, and another method
+for getting and setting the number of bytes, L</nbytes>. Both of the transfer
+functions take between one and three arguments: the device memory location and,
+optionally, the number of bytes to copy and the byte offset.
 
-=head2 send_to
+I recommend against setting the length of a piddle using L</nbytes>. See that
+method's documentation for a discussion of why I think this is bad.
 
-Use this method to send the contents of a piddle to device memory. For an
-example, see the L</PDL Example>.
+If you want to copy data to/from a portion of a piddle, I think it's clearer to
+operate on a slice of a piddle rather than specifying the number of bytes to
+copy. Slices let you work with arbitrary subsections of piddles, whereas
+specifying the number of bytes and an offset only lets you work with a
+contiguous segment of data from the piddle. However, operations on slices
+make internal copies of the slice's data before transfering them, which can lead
+to lots of extra memory allocations if you try to transfer a large slice of an
+even large piddle to or from device memory. So, if you need to transfer a large
+contiguous chunk of memory from an even larger piddle, it would be more efficient
+to specify an offest and the number of bytes to copy rather than operating on a
+slice.
 
-=head2 get_from
-
-Use this method to retrive the contents of a section of device memory I<and
-store them in the invoking piddle>. You can think of this operation as happening
-I<in place>.
+Finally, it should be noted that, at the time of writing, it is not possible to
+transfer data directly to/from mmapped data. Hopefully that will be resolved in
+the future.
 
 =head2 PDL Example
 
 This simple example loads a series of data sets from your disk and runs them
-through a kernel (or collection of kernels) on your device. Don't be naive.
+through a kernel (or collection of kernels) on your device.
 There is a lot of memory transfer happening here, and unless you have a I<lot>
-of processing on the device, this is not going to be very efficient.
+of processing on the device, this is probably going to be very inefficient.
 
 working here - this doesn't actually use the PDL methods
 
@@ -860,11 +1021,286 @@ working here - this doesn't actually use the PDL methods
      $data = readfraw $file;
  }
 
+=head2 send_to
+
+A method that sends the contents of a piddle to device memory.
+
+For example,
+
+ my $N_simulations = 20;
+ my $N_members = 256;
+ my $distribution = zeroes(float, $N_members);
+ my $dev_distribution = Malloc($distribution);
+ 
+ for (1..$N_simulations) {
+     $distribution .= $distribution->grandom;
+     
+     $distribution->send_to($dev_distribution);
+     
+     my_statistics_kernel($dev_distribution, $N_members);
+ }
+
+In this example, you never actually need to know the distribution in your
+Perl-side code, so you could instead create a template piddle with the type and
+number of elements and use that to generate the random values for you on the fly:
+
+ my $N_simulations = 20;
+ my $N_members = 256;
+ my $template = zeroes(float, $N_members);
+ my $dev_distribution = Malloc($distribution);
+ 
+ for(1..$N_simulations) {
+     $template->grandom->send_to($dev_distribution);
+     my_statistics_kernel($dev_distribution, $N_members);
+ }
+
+You can explicitly specify the number of bytes to copy using C<send_to>, if you
+like. Alternatively, if you want to copy fewer bytes from your piddle
+to device memory, simply slice out the data you want, and send that:
+
+ use PDL::NiceSlice;
+ $piddle(20:32)->send_to($dev_memory);
+
+The only method-specific noise this will generate is a warning if you try to
+send a magical piddle, in which case you will get the following warnings:
+
+ Transfering data from magical (mmapped?) piddle may be inefficient
+
+(At the time of writing, such warnings should only come from mmapped piddles or
+piddles involved with special operations in PDL::Graphics::PLplot.) To avoid
+this warning, send a slice of the piddle you wish to transfer, rather than the
+piddle itself.
+
+=cut
+
+sub PDL::send_to {
+	my $self = shift;
+	my $dev_ptr = shift;
+	
+	eval{ Transfer(${$self->get_dataref} => $dev_ptr, @_) };
+	
+	# Check for problems with mmapped data and try a work-around:
+	if ($@ =~ /^Trying to get dataref to magical/) {
+		carp("Transfering data from magical (mmapped?) piddle may be inefficient");
+		$@ = '';
+		my $to_copy = $self->new;
+		$to_copy .= $self;
+		eval{ Transfer($dev_ptr, ${$to_copy->get_dataref}, @_) };
+	}
+	
+	if ($@) {
+		# If I encountered an error, clean up the message and recroak:
+		$@ =~ s/ at .*Min.pm line \d+\.\n//;
+		croak($@);
+	}
+	return $self;
+}
+
+=head2 get_from
+
+Use this method to retrive the contents of a section of device memory I<and
+store them in the invoking piddle>. You can think of this operation as happening
+I<in place>.
+
+Here's an example:
+
+ my $results = zeroes(50);
+ my $dev_results = Malloc($results);
+ 
+ # Run your kernel:
+ run_my_kernel($input_dev_pointer, $N_items, $dev_results);
+ 
+ # Copy the results back:
+ $results->get_from($dev_results);
+
+Just like L</send_to>, you can apply this to a slice if you want. This will only
+copy enough data to fill the piddle on which it is called, so even if the device
+memory has enough memory for 200 elements, if the piddle only holds 20 elements,
+this method will only copy 20 elements:
+
+ # Allocate space for all the results:
+ my $full_results = zeroes($N_runs, $N_data_points);
+ 
+ # Allocate enough device memory for one run's worth of results:
+ my $dev_results = Malloc($full_results(0,:));
+ 
+ # Perform all the runs:
+ for (1..$N_runs) {
+     run_my_kernel($input_dev_pointer, $N_items, $dev_results);
+     
+     # Copy the results into the space allocated for this run:]
+     $full_results($_, :)->get_from($dev_results);
+ }
+
+Alternatively, you can explicitly specify the number of bytes to copy as the
+second argument to the methdod.
+
+=cut
+
+# A utility function that determines if the underlying piddle is an mmapped
+# piddle or a slice:
+sub _piddle_is_mmap_or_slice {
+	my ($self) = @_;
+	
+	$@ = '';
+	eval {
+		# Prepare the test piddle:
+		my $test_pdl = $self->zeroes(1);
+		my $backup = $self->flat->at(0);
+		$test_pdl->set(0, $backup + 1);
+		
+		# Perform the copy at the dataref level:
+		substr (${$self->get_dataref}, 0, PDL::Core::howbig($self->get_datatype)
+			, ${$test_pdl->get_dataref});
+		
+		# At this point, the mmapped piddles will have thrown an error. Since
+		# the memory location of the dataref was not modified, I do not need to
+		# call upd_data. A physical piddle will have the new value at its
+		# zeroeth location; a slice will not:
+		if ($self->flat->at(0) == $backup) {
+			die "Is a slice";
+		}
+		
+		# I can only have reached this point if the original piddle was actually
+		# modified by the dataref manipulations, which means it can be handled
+		# with get_dataref, setdims, etc. Restore the backed-up data:
+		$self->flat->set(0, $backup);
+	};
+	
+	if ($@) {
+		$@ = '';
+		return 1;
+	}
+	return 0;
+}
+
+sub PDL::get_from {
+	my $self = shift;
+	my $dev_ptr = shift;
+	
+	# If I'm dealing with a piddle that knows how to respond to get_dataref
+	# and will do what it's supposed to do, then just send the dataref to
+	# Transfer:
+	unless (_piddle_is_mmap_or_slice($self)) {
+		eval { Transfer($dev_ptr, ${$self->get_dataref}, @_) };
+		# If I encountered an error, clean up the message and recroak:
+		if ($@) {
+			$@ =~ s/ at .*Min.pm line \d+\.\n//;
+			croak $@;
+		}
+		return $self;
+	}
+
+	# If we're here for whatever reason, I have to make a physical piddle with
+	# the same dimensions as $self, into which I can perform the transfer. Make
+	# a copy specifically to receive the data:
+	my $to_copy = $self->new;
+	
+	# Transfer the data; catch, clean, and reissue any errors:
+	eval { Transfer($dev_ptr, ${$to_copy->get_dataref}, @_) };
+	if ($@) {
+		$@ =~ s/ at .*Min.pm line \d+\.\n//;
+		croak($@);
+	}
+	
+	# Copy the results back to self and return self:
+	$self .= $to_copy;
+	return $self;
+}
+
+=head2 nbytes
+
+A rather dumb method for changing the size of a piddle. Use this to get the
+number of bytes used by a piddle if you like, but generally I do not recommend
+using this as a setter in normal PDL code (that is, as a method for setting the
+length of the piddle). The problems are as follows:
+
+=over
+
+=item fails for slices or mmap piddles
+
+Manipulating a slice in the way that this function manipulates piddles will
+cause Perl to crash with a segmentation fault if you call it on a slice. It will
+break your mmapped piddle in less deadly but equally obnoxious ways if you
+attempt to manipulate mmapped piddles. This routine will tell you the size of
+any piddle, but it can only modify physical piddles and will croak if you
+attempt to modify one of these types of piddles.
+
+=item no data initialization
+
+If you extend a piddle, this will simply allocate new memory for the piddle and
+not initialize the new values. You will have garbage that you must clean up (or
+overwrite with a memory transfer) before using the data in the piddle.
+
+=item flattens piddles
+
+This method will resize the piddle so it holds the desired number of bytes, but
+it will create a one-dimensional piddle in the process. If you had multiple
+dimensions, they will vanish! This may also cause problems with slices, as
+discussed next.
+
+=item action at a distance: may break slices
+
+If you shorten a one-dimensional piddle, a slice of your piddle that points to
+data that no longer exists will barf if you try to use it, saying:
+
+ Slice cannot start or end above limit.
+
+On the other hand, if you set the size of a multi-dimensional piddle using this
+method, even if the new piddle is large enough to accomodate the old slice's
+flattened array offsets, using that slice will barf with:
+
+ Error in slice:Too many dims in slice.
+
+=back
+
+This function is provided for completeness, so that other code can call
+L</SetSize> on an argument and it will "Do What I Mean," even for a piddle.
+Just be aware that, under some circumstances, it will also do things that you
+I<don't> mean, too.
+
+Under the hood, this function uses the undocumented PDL method C<setdims> to
+achieve its end. (I belive that method I<should> be documented; it's a C
+function defined in pdlapi.c which is accessible as a Perl-level method. I
+can't imagine that somebody went through the trouble of making that function
+Perl-accessible without meaning that others use it. But clearly it has
+side-effects that I was unable to tease out, leading to the trouble with slices
+and mmapped piddles.)
+
+=cut
+
+sub PDL::nbytes {
+	my $length = PDL::Core::howbig($_[0]->get_datatype) * $_[0]->nelem;
+	return $length unless @_ > 1;
+	
+	my ($self, $new_length) = @_;
+	
+	croak("New size ($new_length) is not a multiple of this piddle's type, " . $self->type)
+		unless $new_length % PDL::Core::howbig($self->get_datatype) == 0;
+	
+	# Warn if the underlying piddle has multiple dimensions:
+	carp('Flattening multidimensional piddle with call to nbytes')
+		if $self->ndims > 1;
+	
+	# Test if the underlying piddle is mmapped or a slice, in which case calling
+	# setdims will cause major trouble:
+	croak("Unable to call nbytes on a slice or a piddle with mmapped data")
+		if _piddle_is_mmap_or_slice($self);
+	
+	# If we're here, we are good to go:
+	$self->setdims([$new_length / PDL::Core::howbig($self->get_datatype)]);
+	
+	return $length;
+}
+
+1;
+__END__
+
 =head1 Unspecified launch failure
 
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
 C<cudaGetLastError>, which happens when any of these functions croak, or when
-you call L</GetLastError> or L</CheckForErrors>. With one exception, later
+you call L</GetLastError> or L</ThereAreCudaErrors>. With one exception, later
 checks for CUDA errors should be ok unless they actually had trouble. The
 exception is the C<unspecified launch failure>, which will cause all further
 kernel launches to fail with C<unspecified launch failure>. You can still copy
@@ -891,33 +1327,84 @@ try this route, but I do not recommend it.
 =head1 EXPORTS
 
 This uses the standard L<Exporter> module, so it behaves in a fairly standard
-way. I know it's considered modern to not export anything by default, but frakly
-I think that's dumb for this module. As such, it exports the functions that I
-used most when I was developing it, which include:
+way. I know it's considered modern to not export anything by default, but
+I think that's dumb for this module. It exports all of the documented
+functions. However, you can select to have only certain functions or groups of
+functions exported if you wish.
 
- :most 
+=head2 Exporting nothing
 
-If you're a purist and don't want those, there's nothing stopping you from
-saying
+If you're a purist and don't want anything in your current package, there's
+nothing stopping you from saying
 
  use CUDA::Min '';
 
-which won't import anything. You can also use the C<:all> tag, which will import
+which won't import anything. If you only want one or two functions, you can
+get at them with their fully-qualified name, like this:
 
- function-names
+ my $error_string = CUDA::Min::GetLastError;
 
-in addition to the ones already listed.
+or you can import specific functions by name:
 
-working here - a bit about combining :most with individual functions
+ use CUDA::Min qw(GetLastError);
 
-You can also import individual functions by specifying their names. In that
-case, you must fully qualify any functions that you don't import, such as
-C<CUDA::Min::Sizeof> in this example:
+=head2 Memory functions
 
- use CUDA::Min qw(Malloc Free);
- my $dev_ptr = Malloc(CUDA::Min::Sizeof '20f');
- ...
- Free($dev_ptr);
+You can export the memory-related functions using the C<:memory> tag, like so:
+
+ use CUDA::Min qw(:memory);
+
+That will make L</Malloc>, L</MallocFrom>, L</Transfer>, and L</Free> available.
+
+=head2 Synchronization
+
+Suppose you have some module that invokes various CUDA stuff for you. It handles
+all of the memory internally. If you want to benchmark that code, you will
+want L</ThreadSynchronize>, which you get by either of the following:
+
+ use CUDA::Min ':sync';
+ use CUDA::Min 'ThreadSynchronize';
+
+=head2 Error functions
+
+If you want to have access to the error-handling functions L</GetLastError>
+and L</ThereAreCudaErrors>, you can use the C<:error> tag:
+
+ use CUDA::Min qw(:error);
+
+=head2 Utility functions
+
+The functions for setting the size of host memory or determining the size of
+an allocation are L</SetSize> and L</Sizeof>. You can import those using the
+C<:util> tag:
+
+ use CUDA::Min ':util';
+
+=head1 TODO
+
+=over
+
+=item Proof read the documentation
+
+For example, I'm not sure if all the warnings and error messages for the PDL
+methods are documented at the moment.
+
+=item Update the test suite
+
+The functionality has ballooned since I wrote my original test suite. The suite
+needs to be updated to include tests for the object-based interface, and to
+check for throwing appropriate errors at appropriate times.
+
+=item Objects to device pointers
+
+The requirement for manual clean-up of device pointers could be done-away with
+if L</Malloc> and L</MallocFrom> returned device pointer objects instead of
+simple integers. In that case, the device memory would automatically clean 
+itself up when it went out of scope, making calls to L</Free> almost entirely
+unnecessary. (Or, for that matter, making it possible to free device memory
+simply by saying C<$dev_memory = undef>.)
+
+=back
 
 =head1 BUGS AND LIMITATIONS
 
@@ -949,10 +1436,6 @@ wrappers for your kernels.
 An entirely different approach to CUDA that you can leverage from Perl is
 L<KappaCUDA>.
 
-For general-purpose numerical computing using Perl, you should check out L<PDL>.
-Linking PDL and CUDA should happen soon, but that is not the goal of this
-library.
-
 Some day soon, I hope to have created L<Inline::CUDA>, which would make wrapping
 your CUDA kernels much simpler.
 
@@ -973,53 +1456,12 @@ programming language in it. I'm sure you can figure out which one to remove.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2010-2011 by David Mertens
+Copyright (C) 2010-2011 by The Board of Trustees of the University of Illinois
+
+(David Mertens is a grad student of the U of I.)
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
 at your option, any later version of Perl 5 you may have available.
-
-=head1 NEW API
-
-You can now send objects in place of dev-ptr or packed-array.
-
-=head2 packed-array object
-
-A class that intends to mimc host memory needs to provide the following methods:
-
-=over
-
-=item nbytes
-
-Getter and setter
-
-=item send_to
-
-Sends data to the device
-
-=item get_from
-
-Gets data from the device
-
-=back
-
-=head2 dev-ptr object
-
-A class that intends to mimic device memory needs to provide the following
-methods:
-
-=over
-
-=back
-
-=item get_dev_ptr (required)
-
-Returns an integer that can be interpreted as a device pointer
-
-=item free_dev_memory (optional)
-
-Frees device memory. If not supplied, the internal _free function will be
-called on the result of get_dev_ptr, which will automatically set its argument
-to zero.
 
 =cut
