@@ -79,6 +79,8 @@ $data(12:15)->get_from($dev_ptr);
 ok(all($data(12:15) == $should_be), "Transfer to a slice works")
 	or diag("data was " . $data(12:15) . " and it should have been $should_be");
 
+# working here - add croak tests for get_from and send_to, which fail at the moment
+
 # Clean up:
 Free($dev_ptr);
 
