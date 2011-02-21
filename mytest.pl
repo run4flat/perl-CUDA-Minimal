@@ -2,15 +2,10 @@
 use strict;
 use warnings;
 use blib;
-use CUDA::Min qw(:all);
+use CUDA::Min;
 use feature 'say';
 
-# Print out the various constants:
-foreach my $const (DeviceToHost, HostToDevice, DeviceToDevice) {
-	say $const;
-}
-
-SetSize(my $test_scalar, 30, 'f');
+SetSize(my $test_scalar, Sizeof(f => 30));
 say "Length of test scalar is ", length($test_scalar);
 
 # Create a packed scalar with values that we will copy to the device:
@@ -35,6 +30,9 @@ say "new_array currently looks like this:";
 say foreach (unpack 'f*', $new_array);
 
 # Copy the device memory back:
+Transfer($dev_ptr => $new_array);
+
+# Copy the device memory back again:
 Transfer($dev_ptr => $new_array);
 
 # Print out the results, which should be 1-10:

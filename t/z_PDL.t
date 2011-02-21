@@ -13,14 +13,59 @@ BEGIN {
 		plan skip_all => 'PDL must be installed for the PDL tests';
 	}
 	else {
-		plan tests => 9;
+		plan tests => 15;
 	}
 }
 use PDL::NiceSlice;
 
+##########################
+# Utility function works #
+##########################
+
+my $data = sequence(50);
+my $slice = $data(0:9);
+ok(CUDA::Min::_piddle_is_mmap_or_slice($slice),
+	"Utility function correctly identifies slice");
+ok(!CUDA::Min::_piddle_is_mmap_or_slice($data),
+	"Utility function correctly identifies non-slice");
+
+use PDL::IO::FastRaw;
+my $test_fname = 'test.binary.data';
+$data->writefraw($test_fname);
+
+SKIP:
+{
+	my $mmap = eval {mapfraw $test_fname};
+	skip('because PDL does not support mmap for your system', 1) if $@;
+	ok(CUDA::Min::_piddle_is_mmap_or_slice($mmap),
+		"Utility function correctly identifies mmap");
+}
+
+# Clear any error and remove the temporary file:
+$@ = '';
+unlink $test_fname;
+unlink "$test_fname.hdr";
+
+# Test direct dataref updates:
+my $negative_ones = -ones(10);
+substr(${$data->get_dataref}, 0, PDL::Core::howbig($data->get_datatype)*10,
+	${$negative_ones->get_dataref});
+my $results = sequence(50);
+$results(0:9) .= -1;
+ok(all($data == $results), 'Direct data updates work');
+
+# Data should still not be considered a slice
+ok(!CUDA::Min::_piddle_is_mmap_or_slice($data),
+	"Utility function still correctly identifies non-slice");
+
+
+###############
+# Basic Tests #
+###############
+
 # Generate some data (20 sequential doubles)
 my $length = 20;
-my $data = sequence($length);
+$data = sequence($length);
 
 # Check that data allocation doesn't croak:
 $@ = '';
@@ -49,7 +94,7 @@ ok(all ($new_data == $data), "Memory transfer did not copy garbage");
 ##############################
 # copies to/from slices work #
 ##############################
-my $slice = $data(2:5);
+$slice = $data(2:5);
 
 # Try copying elements 2-5 from $data to the start of the device memory:
 eval {Transfer($slice => $dev_ptr) };
@@ -79,7 +124,15 @@ $data(12:15)->get_from($dev_ptr);
 ok(all($data(12:15) == $should_be), "Transfer to a slice works")
 	or diag("data was " . $data(12:15) . " and it should have been $should_be");
 
-# working here - add croak tests for get_from and send_to, which fail at the moment
+# working here - add croak tests for get_from and send_to, which fail at
+# the moment
+
+# There once was a time when a second transfer to a piddle failed.
+# This tests that:
+$@ = '';
+eval {Transfer($dev_ptr => $data(12:15))};
+ok($@ eq '', "Second transfer to pdl does not croak")
+	or diag($@);
 
 # Clean up:
 Free($dev_ptr);

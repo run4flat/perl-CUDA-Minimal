@@ -1143,11 +1143,14 @@ sub _piddle_is_mmap_or_slice {
 	my ($self) = @_;
 	
 	$@ = '';
+	# Backup the current value:
+	my $backup = $self->flat->at(0);
 	eval {
-		# Prepare the test piddle:
-		my $test_pdl = $self->zeroes(1);
-		my $backup = $self->flat->at(0);
-		$test_pdl->set(0, $backup + 1);
+		# Prepare the piddle for its test (set it strictly to zero):
+		$self->flat->set(0, 0);
+		# Prepare the alternative value (set it strictly to one):
+		my $test_pdl = $self->zeroes($self->type, 1);
+		$test_pdl->set(0, 1);
 		
 		# Perform the copy at the dataref level:
 		substr (${$self->get_dataref}, 0, PDL::Core::howbig($self->get_datatype)
@@ -1157,15 +1160,13 @@ sub _piddle_is_mmap_or_slice {
 		# the memory location of the dataref was not modified, I do not need to
 		# call upd_data. A physical piddle will have the new value at its
 		# zeroeth location; a slice will not:
-		if ($self->flat->at(0) == $backup) {
+		if ($self->flat->at(0) == 0) {
 			die "Is a slice";
 		}
-		
-		# I can only have reached this point if the original piddle was actually
-		# modified by the dataref manipulations, which means it can be handled
-		# with get_dataref, setdims, etc. Restore the backed-up data:
-		$self->flat->set(0, $backup);
 	};
+
+	# Undo any changes:
+	$self->flat->set(0, $backup);
 	
 	if ($@) {
 		$@ = '';
@@ -1177,6 +1178,11 @@ sub _piddle_is_mmap_or_slice {
 sub PDL::get_from {
 	my $self = shift;
 	my $dev_ptr = shift;
+	
+	# Voice opposition to bad values
+	Carp::cluck("nelem/length mismatch!")
+		if $self->nelem * PDL::Core::howbig($self->get_datatype)
+			!= length(${$self->get_dataref});
 	
 	# If I'm dealing with a piddle that knows how to respond to get_dataref
 	# and will do what it's supposed to do, then just send the dataref to
