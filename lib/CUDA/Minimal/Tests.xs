@@ -2,6 +2,8 @@
 #include "perl.h"
 #include "XSUB.h"
 
+// See Tests.pm for the associated copyright and license details.
+
 #include "ppport.h"
 
 //////////////////////////////////
@@ -20,7 +22,7 @@
 #define N_LAYERS 8
 
 // This is part of a hack prevent the BOOT section from being included in
-// Min.xs's boot section, an error I do not understand at all:
+// Minimum.xs's boot section, an error I do not understand at all:
 #define TESTS_BOOT
 
 /////////////////
@@ -206,19 +208,19 @@ float divide_and_conquer_sum (float * data, int length) {
 			+ divide_and_conquer_sum(data + length, length));
 }
 
-MODULE = CUDA::Min::Tests		PACKAGE = CUDA::Min::Tests		
+MODULE = CUDA::Minimal::Tests		PACKAGE = CUDA::Minimal::Tests		
 
 ########################
 # Export the constants #
 ########################
 
 BOOT:
-// This boot seciton does NOT belong in Min.c, but it somehow ends up there
+// This boot seciton does NOT belong in Minimal.c, but it somehow ends up there
 // anyway! This #ifdef prevents stupidity from happening:
 #ifdef TESTS_BOOT
 	# Add the preprocessor constants to the namespace:
 	HV * stash;
-	stash = gv_stashpv("CUDA::Min::Tests", TRUE);
+	stash = gv_stashpv("CUDA::Minimal::Tests", TRUE);
 	newCONSTSUB(stash, "N_THREADS",	newSViv( N_THREADS ));
 	newCONSTSUB(stash, "MIN_PER_BLOCK", newSViv( MIN_PER_BLOCK ));
 	newCONSTSUB(stash, "N_LAYERS", newSViv( N_LAYERS ));

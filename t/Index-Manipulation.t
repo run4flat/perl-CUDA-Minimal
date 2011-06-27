@@ -1,7 +1,7 @@
 # A set of tests for the index manipulation functions.
 
 use Test::More tests => 7;
-use CUDA::Min;
+use CUDA::Minimal;
 
 # Check that Sizeof computes values correctly, and croaks on bad input:
 ok(Sizeof(c => 20) == 20, "20 chars take 20 bytes");

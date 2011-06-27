@@ -1,7 +1,7 @@
 # A collection of tests for the memory functions
 
 use Test::More tests => 8;
-use CUDA::Min;
+use CUDA::Minimal;
 use strict;
 use warnings;
 

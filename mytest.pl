@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 use blib;
-use CUDA::Min;
+use CUDA::Minimal;
 use feature 'say';
 
 SetSize(my $test_scalar, Sizeof(f => 30));

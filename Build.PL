@@ -1,6 +1,6 @@
 use Module::Build;
 my $build = Module::Build->new(
-	module_name => 'CUDA::Min',
+	module_name => 'CUDA::Minimal',
 	license => 'perl',
 	build_requires => {
 				'ExtUtils::nvcc' => '0.01',
@@ -10,7 +10,7 @@ my $build = Module::Build->new(
 				'perl' => '0',
 			},
 	dist_author => 'David Mertens <dcmertens.perl@gmail.com>',
-	config => {cc => 'perl_nvcc', ld => 'perl_nvcc'},
+	config => {ExtUtils::nvcc::MB},
 	include_dirs => '.',
 );
 

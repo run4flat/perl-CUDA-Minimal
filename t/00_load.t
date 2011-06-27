@@ -2,7 +2,7 @@
 
 use Test::More tests => 2;
 
-use_ok('CUDA::Min');
-use_ok('CUDA::Min::Tests');
+use_ok('CUDA::Minimal');
+use_ok('CUDA::Minimal::Tests');
 
 

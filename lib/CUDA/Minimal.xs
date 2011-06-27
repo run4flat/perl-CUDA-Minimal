@@ -4,7 +4,7 @@
 
 #include "ppport.h"
 
-MODULE = CUDA::Min		PACKAGE = CUDA::Min		
+MODULE = CUDA::Minimal		PACKAGE = CUDA::Minimal		
 
 void
 _free(SV * dev_ptr_SV)

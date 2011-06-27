@@ -2,10 +2,10 @@ use Test::More tests => 25;
 
 # This file starts with z_ to ensure that it runs last.
 
-# Load CUDA::Min::Tests, which provides functions to facilitate testing
+# Load CUDA::Minimal::Tests, which provides functions to facilitate testing
 # kernel invocations:
-use CUDA::Min;
-use CUDA::Min::Tests;
+use CUDA::Minimal;
+use CUDA::Minimal::Tests;
 
 use strict;
 use warnings;
@@ -16,7 +16,7 @@ is($string, 'no error', "With no error, GetLastError should return 'no error'");
 ok(not (ThereAreCudaErrors), 'ThereAreCudaErrors should return false when there are none');
 ok($@ eq '', 'ThereAreCudaErrors does not set $@ when there are no problems');
 # Make sure the kernel that's supposed to always succeed does, in fact, succeed:
-CUDA::Min::Tests::succeed_test();
+CUDA::Minimal::Tests::succeed_test();
 ok(not (defined ThereAreCudaErrors), 'succeed_test does not set a CUDA error');
 
 # Create a collection of values to sum and copy them to the device:
@@ -26,7 +26,7 @@ my $dev_ptr = MallocFrom($host_array);
 
 # Run the multiply kernel; copy back 10 random values and make sure they are
 # what they are supposed to be:
-CUDA::Min::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
+CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
 my $test_val = pack 'f', 1;
 for (1..10) {
 	my $offset = int rand $N_elements;
@@ -35,11 +35,11 @@ for (1..10) {
 }
 
 # Return the values to their original state:
-CUDA::Min::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 0.25);
+CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 0.25);
 
 # Test the sum:
-CUDA::Min::Tests::sum_reduce_test($host_array, $dev_ptr, 'a single block');
-CUDA::Min::Tests::sum_reduce_test($host_array, $dev_ptr, '32 blocks', 32);
+CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, 'a single block');
+CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '32 blocks', 32);
 
 # Free the current device memory before moving forward:
 Free($dev_ptr);
@@ -47,9 +47,9 @@ Free($dev_ptr);
 # Now I'm going to try a nontrivial sum of 65536 floats:
 $host_array = pack 'f*', map {sin ($_/10)} 1..65536;
 $dev_ptr = MallocFrom($host_array);
-CUDA::Min::Tests::sum_reduce_test($host_array, $dev_ptr, 'single block sine-sum');
-CUDA::Min::Tests::sum_reduce_test($host_array, $dev_ptr, '32 block sine-sum', 32);
-CUDA::Min::Tests::sum_reduce_test($host_array, $dev_ptr, '1024,32 block sine-sum', 1024, 32);
+CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, 'single block sine-sum');
+CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '32 block sine-sum', 32);
+CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '1024,32 block sine-sum', 1024, 32);
 
 # Don't forget to clean up:
 Free($dev_ptr);
@@ -64,7 +64,7 @@ Free($dev_ptr);
 # GetLastError and the documentation should be updated accordingly.
 
 # Run the kernel that is supposed to fail and see what we get:
-CUDA::Min::Tests::fail_test();
+CUDA::Minimal::Tests::fail_test();
 ThreadSynchronize();
 ok(ThereAreCudaErrors, "ThereAreCudaErrors returns a true value when an error occurs");
 # Check that ThereAreCudaErrors sets $@
@@ -76,13 +76,13 @@ $@ = '';
 ok(not (defined ThereAreCudaErrors), "ThereAreCudaErrors clears the last error");
 
 # Check that the next kernel invocation trips an error
-CUDA::Min::Tests::succeed_test();
+CUDA::Minimal::Tests::succeed_test();
 ok(ThereAreCudaErrors, "Good kernels invoked after a failed kernel launch also fail");
 like($@, qr/unspecified/, 'ThereAreCudaErrors properly sets $@ on error');
 $@ = '';
 
 # Check the return value of GetLastError:
-CUDA::Min::Tests::succeed_test();
+CUDA::Minimal::Tests::succeed_test();
 like(GetLastError, qr/unspecified/, 'Further kernel invocations return an unspecified launch failure');
 
 

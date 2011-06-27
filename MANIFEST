@@ -1,8 +1,8 @@
 Build.PL
-lib/CUDA/Min.pm
-lib/CUDA/Min.xs
-lib/CUDA/Min/Tests.pm
-lib/CUDA/Min/Tests.xs
+lib/CUDA/Minimal.pm
+lib/CUDA/Minimal.xs
+lib/CUDA/Minimal/Tests.pm
+lib/CUDA/Minimal/Tests.xs
 MANIFEST			This list of files
 mytest.pl
 ppport.h

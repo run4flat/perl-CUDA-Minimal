@@ -1,9 +1,9 @@
-# Tests for the PDL functionality of CUDA::Min
+# Tests for the PDL functionality of CUDA::Minimal
 
 use strict;
 use warnings;
 use Test::More;
-use CUDA::Min;
+use CUDA::Minimal;
 
 # Put this in a begin block so that I don't get to the NiceSlice include
 # if PDL is not on their machine.
@@ -24,9 +24,9 @@ use PDL::NiceSlice;
 
 my $data = sequence(50);
 my $slice = $data(0:9);
-ok(CUDA::Min::_piddle_is_mmap_or_slice($slice),
+ok(CUDA::Minimal::_piddle_is_mmap_or_slice($slice),
 	"Utility function correctly identifies slice");
-ok(!CUDA::Min::_piddle_is_mmap_or_slice($data),
+ok(!CUDA::Minimal::_piddle_is_mmap_or_slice($data),
 	"Utility function correctly identifies non-slice");
 
 use PDL::IO::FastRaw;
@@ -37,7 +37,7 @@ SKIP:
 {
 	my $mmap = eval {mapfraw $test_fname};
 	skip('because PDL does not support mmap for your system', 1) if $@;
-	ok(CUDA::Min::_piddle_is_mmap_or_slice($mmap),
+	ok(CUDA::Minimal::_piddle_is_mmap_or_slice($mmap),
 		"Utility function correctly identifies mmap");
 }
 
@@ -55,7 +55,7 @@ $results(0:9) .= -1;
 ok(all($data == $results), 'Direct data updates work');
 
 # Data should still not be considered a slice
-ok(!CUDA::Min::_piddle_is_mmap_or_slice($data),
+ok(!CUDA::Minimal::_piddle_is_mmap_or_slice($data),
 	"Utility function still correctly identifies non-slice");
 
 

@@ -1,4 +1,4 @@
-package CUDA::Min;
+package CUDA::Minimal;
 
 use 5.010001;
 use strict;
@@ -39,11 +39,11 @@ sub is_an_object ($) {
 
 =head1 NAME
 
-CUDA::Min - A minimal set of Perl bindings for CUDA.
+CUDA::Minimal - A minimal set of Perl bindings for CUDA.
 
 =head1 SYNOPSIS
 
- use CUDA::Min;
+ use CUDA::Minimal;
  # Create a host-side array of 10 sequential
  # single-precision floating-point values:
  my $N_values = 10;
@@ -105,7 +105,7 @@ CUDA::Min - A minimal set of Perl bindings for CUDA.
 
  # The order of inclusion is not important:
  use PDL;
- use CUDA::Min;
+ use CUDA::Minimal;
  use PDL::NiceSlice;
  
  # Create a double array of 20 sequential elements:
@@ -287,7 +287,7 @@ is CUDA's reason, not mine.)
 
 Usage example:
 
- use CUDA::Min;
+ use CUDA::Minimal;
  my $data = pack('f*', 1..10);
  my $dev_input_ptr = MallocFrom($data);
  my $dev_output_ptr = Malloc($data);
@@ -876,7 +876,7 @@ sub ThereAreCudaErrors () {
 }
 
 require XSLoader;
-XSLoader::load('CUDA::Min', $VERSION);
+XSLoader::load('CUDA::Minimal', $VERSION);
 
 ##############################
 # OBJECT ORIENTED INTERFACES #
@@ -886,7 +886,7 @@ XSLoader::load('CUDA::Min', $VERSION);
 
 The documentation made many references to objects that mimic device or host
 memory. Objects that 'mimic' device or host memory have a handful of methods
-that C<CUDA::Min> expects to be able to call on them.
+that C<CUDA::Minimal> expects to be able to call on them.
 
 =head2 Host memory
 
@@ -952,7 +952,7 @@ or nothing at all.
 
 =head1 PDL METHODS
 
-As an illustration of an object-oriented interface, CUDA::Min supports using
+As an illustration of an object-oriented interface, CUDA::Minimal supports using
 piddles in its arguments. It provides two
 PDL methods for data transfer, L</send_to> and L</get_from>, and another method
 for getting and setting the number of bytes, L</nbytes>. Both of the transfer
@@ -1343,22 +1343,22 @@ functions exported if you wish.
 If you're a purist and don't want anything in your current package, there's
 nothing stopping you from saying
 
- use CUDA::Min '';
+ use CUDA::Minimal '';
 
 which won't import anything. If you only want one or two functions, you can
 get at them with their fully-qualified name, like this:
 
- my $error_string = CUDA::Min::GetLastError;
+ my $error_string = CUDA::Minimal::GetLastError;
 
 or you can import specific functions by name:
 
- use CUDA::Min qw(GetLastError);
+ use CUDA::Minimal qw(GetLastError);
 
 =head2 Memory functions
 
 You can export the memory-related functions using the C<:memory> tag, like so:
 
- use CUDA::Min qw(:memory);
+ use CUDA::Minimal qw(:memory);
 
 That will make L</Malloc>, L</MallocFrom>, L</Transfer>, and L</Free> available.
 
@@ -1368,15 +1368,15 @@ Suppose you have some module that invokes various CUDA stuff for you. It handles
 all of the memory internally. If you want to benchmark that code, you will
 want L</ThreadSynchronize>, which you get by either of the following:
 
- use CUDA::Min ':sync';
- use CUDA::Min 'ThreadSynchronize';
+ use CUDA::Minimal ':sync';
+ use CUDA::Minimal 'ThreadSynchronize';
 
 =head2 Error functions
 
 If you want to have access to the error-handling functions L</GetLastError>
 and L</ThereAreCudaErrors>, you can use the C<:error> tag:
 
- use CUDA::Min qw(:error);
+ use CUDA::Minimal qw(:error);
 
 =head2 Utility functions
 
@@ -1384,7 +1384,7 @@ The functions for setting the size of host memory or determining the size of
 an allocation are L</SetSize> and L</Sizeof>. You can import those using the
 C<:util> tag:
 
- use CUDA::Min ':util';
+ use CUDA::Minimal ':util';
 
 =head1 TODO
 

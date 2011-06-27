@@ -1,16 +1,16 @@
 =head1 NAME
 
-CUDA::Min::Tests - a collection of tests for CUDA::Min.
+CUDA::Minimal::Tests - a collection of tests for CUDA::Minimal.
 
 =head1 USAGE
 
-This provides a couple of CUDA kernels used in the CUDA::Min test suite.
+This provides a couple of CUDA kernels used in the CUDA::Minimal test suite.
 You probably won't have need for any of these, unless you want to take a look at
 the XS code in Test.xs for an idea of how to wrap CUDA kernel calls.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2010 by David Mertens
+Copyright (C) 2010, 2011 by David Mertens
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
@@ -18,7 +18,7 @@ at your option, any later version of Perl 5 you may have available.
 
 =cut
 
-package CUDA::Min::Tests;
+package CUDA::Minimal::Tests;
 
 use 5.010001;
 use strict;
@@ -30,9 +30,9 @@ BEGIN {
 our $VERSION = '0.01';
 
 require XSLoader;
-XSLoader::load('CUDA::Min::Tests', $VERSION);
+XSLoader::load('CUDA::Minimal::Tests', $VERSION);
 
-use CUDA::Min;
+use CUDA::Minimal;
 use Carp 'croak';
 
 #####################
