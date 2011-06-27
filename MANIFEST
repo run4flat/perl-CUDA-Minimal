@@ -8,7 +8,8 @@ mytest.pl
 ppport.h
 README
 t/00_load.t
+t/Index-Manipulation.t
 t/Memory.t
-t/SetSize.t
 t/Transfer.t
 t/z_kernel_invocations.t
+t/z_PDL.t

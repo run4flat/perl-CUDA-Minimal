@@ -1,4 +1,9 @@
 use Module::Build;
+
+use strict;
+use warnings;
+use ExtUtils::nvcc;
+
 my $build = Module::Build->new(
 	module_name => 'CUDA::Minimal',
 	license => 'perl',
@@ -13,6 +18,9 @@ my $build = Module::Build->new(
 	config => {ExtUtils::nvcc::MB},
 	include_dirs => '.',
 );
+
+print "Compiler is ", $build->config('cc'), "\n";
+print "Linker is ", $build->config('ld'), "\n";
 
 $build->create_build_script;
 

@@ -139,9 +139,16 @@ functionality to get Perl and CUDA talking together nicely, with an emphasis on
 nicely. It works with plain-ol' packed Perl scalars, and it works nicely with
 PDL. (However, it does not require that you have PDL installed to use it.)
 
-It does not try to wrap all possible CUDA-C functions. I said nice, not
-complete. In fact, this does not even provide any CUDA kernels, or even a
-framework for writing them. However, it does provide some degree of object
+It does not try to wrap all possible CUDA-C functions, and it's not even
+up-to-date, even on the day of its release. I said nice, not
+complete. These bindings were originally written months before CUDA Toolkit
+4.0 was released, and it seems like a number of functions were added to the
+API that makes some of the work-arounds in this API a bit, well, out-of-date.
+Still, they work, and that's the point. In fact, this does not even provide
+any CUDA kernels, or even a framework for writing them.
+
+Enough with the limitations of this module. The point is that *IT WORKS*.
+Furthermore, it has a nice interface and provides some degree of object
 awareness, so that you can create object interfaces to device and host memory
 and pass those objects to functions like C<MallocFrom>, C<Free>, and C<Transfer>.
 If you would like to make objects that mimic device or host memory, see
@@ -1393,7 +1400,8 @@ C<:util> tag:
 =item Proof read the documentation
 
 For example, I'm not sure if all the warnings and error messages for the PDL
-methods are documented at the moment.
+methods are documented at the moment. It's simply a matter of reading through
+the code, but I'm trying to push this out as quickly as possible.
 
 =item Update the test suite
 
@@ -1414,12 +1422,8 @@ simply by saying C<$dev_memory = undef>.)
 
 =head1 BUGS AND LIMITATIONS
 
-There is one big fat glaring bug with this library, which is that if you
-allocate any memory on the device, the script will die, at the very very end,
-with a segmentation fault. Any help on this would be much appreciated.
-
 A potentially major shortcoming of this library is that it does not provide an
-interface to global variables on the device. If have not decided if that's a bug
+interface to global variables on the device. I have not decided if that's a bug
 or a feature. I think it may be good because it requires kernel writers to
 explicitly provide functions for manipulating global memory locations, which I
 think is a good idea. Real-world usage will tell whether or not such a function
@@ -1430,20 +1434,20 @@ provided by CUDA-C (i.e. the 'Array' and 'Async' functions, not to mention
 stream, event, and thread management, OpenGL, Direct3D, and many others). Since
 Kirk and Hwu (see references below) never use those functions, I have never used
 them, and see no need to include them in a minimal set of bindings. Those sorts
-of bindings would be more approriate for a L<CUDA::C> library, which I would
-encourage others to consider writing. :-)
+of bindings would be more approriate for a L<CUDA::Driver> library, which I hope
+to take up some time soon, hopefully with your help! :-)
 
 =head1 SEE ALSO
 
-This module requires the nvcc compiler wrapper C<perl_nvcc> provided by
-L<ExtUtils::nvcc>, and you will probably want to use C<perl_nvcc> to make Perl
-wrappers for your kernels.
+This module requires the nvcc tool chain and the Perl trappings for it,
+which are discussed under L<ExtUtils::nvcc>.
 
 An entirely different approach to CUDA that you can leverage from Perl is
 L<KappaCUDA>.
 
-Some day soon, I hope to have created L<Inline::CUDA>, which would make wrapping
-your CUDA kernels much simpler.
+I hope to some day write L<CUDA::Driver>, a complete wrapping of the CUDA
+Driver API. However, not a single keystroke of code has been written (as of
+this writing; as of your reading, things may have changed).
 
 If you want to do anything quickly to your packed scalars on the host-side, and
 you don't want to use PDL for some reason, consider using L<Inline::C>.
@@ -1462,9 +1466,7 @@ programming language in it. I'm sure you can figure out which one to remove.
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2010-2011 by The Board of Trustees of the University of Illinois
-
-(David Mertens is a grad student of the U of I.)
+Copyright (C) 2010-2011 by David Mertens
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,

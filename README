@@ -1,37 +1,37 @@
 CUDA-Minimal version 0.01
 =========================
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+CUDA::Minimal is a minimal set of CUDA bindings for Perl.
 
-A README file is required for CPAN modules since CPAN extracts the
-README file from a module distribution so that people browsing the
-archive can use it get an idea of the modules uses. It is usually a
-good idea to provide version information here so that people can
-decide whether fixes for the module are worth downloading.
+CUDA is a great framework for writing parallel applications that run on
+(capable) nVidia video cards. An important part of CUDA is the API for
+transfering data to and from the video card. These bindings provide a
+set of Perl-accessible functions that expose that API, allowing you,
+the programmer, to focus on the important stuff: writing your CUDA
+kernels.
 
 INSTALLATION
 
 To install this module type the following:
 
-   perl Makefile.PL
-   make
-   make test
-   make install
+   perl Build.PL
+   ./Build
+   ./Build test
+   ./Build install
+
+If you're on Windows, the ./ is not necessary.
 
 DEPENDENCIES
 
-This module requires these other modules and libraries:
-
-  blah blah blah
+This module requires ExtUtils::nvcc. At the time of writing,
+ExtUtils::nvcc is supposed to run on Windows using Visual c++, and on
+Linux using gcc. However, ExtUtils::nvcc is not yet working on Windows
+and it does not work on Fedora 15 (because nVidia only supports through
+Fedora 13). HOWEVER, it is known to work on Ubuntu 10.10.
 
 COPYRIGHT AND LICENCE
 
-Put the correct copyright and licence information here.
-
-Copyright (C) 2010 by David Mertens
+Copyright (C) 2010-2011 by David Mertens
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
