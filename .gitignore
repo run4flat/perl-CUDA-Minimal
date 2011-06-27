@@ -4,3 +4,8 @@ _build/
 blib/
 *.c
 *.o
+*.json
+
+# Windows-specific files
+*.bat
+*.pdb
