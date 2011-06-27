@@ -25,9 +25,9 @@ DEPENDENCIES
 
 This module requires ExtUtils::nvcc. At the time of writing,
 ExtUtils::nvcc is supposed to run on Windows using Visual c++, and on
-Linux using gcc. However, ExtUtils::nvcc is not yet working on Windows
-and it does not work on Fedora 15 (because nVidia only supports through
-Fedora 13). HOWEVER, it is known to work on Ubuntu 10.10.
+Linux using gcc. However, not all is finished and in fact it is known
+to work on Ubuntu 10.10, only. If you want to see CUDA::Minimal on your
+favorite platform, please help improve ExtUtils::nvcc!
 
 COPYRIGHT AND LICENCE
 

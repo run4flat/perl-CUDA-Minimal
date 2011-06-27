@@ -1422,6 +1422,9 @@ simply by saying C<$dev_memory = undef>.)
 
 =head1 BUGS AND LIMITATIONS
 
+The code for CUDA::Minimal is hosted at github. Please file bugs at
+L<https://github.com/run4flat/perl-CUDA-Minimal/issues>.
+
 A potentially major shortcoming of this library is that it does not provide an
 interface to global variables on the device. I have not decided if that's a bug
 or a feature. I think it may be good because it requires kernel writers to
