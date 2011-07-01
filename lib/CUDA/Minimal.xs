@@ -4,6 +4,12 @@
 
 #include "ppport.h"
 
+#include <cuda.h>
+
+#ifndef CUDA_VERSION 
+#define CUDA_VERSION 0
+#endif 
+
 MODULE = CUDA::Minimal		PACKAGE = CUDA::Minimal		
 
 void
@@ -146,7 +152,16 @@ PeekAtLastError()
 	OUTPUT:
 		RETVAL
 
-void
+SV *
 DeviceReset()
 	CODE:
-		cudaDeviceReset();
+//CUDA greater then version 4.1 needed 
+#if (CUDA_VERSION > 4010 ) 
+		cudaError_t err = cudaDeviceReset();
+		RETVAL = newSVpv(cudaGetErrorString(err), 0);
+#else
+		RETVAL = newSVpv("Version too low for cudaDeviceReset", 0 );
+#endif
+	OUTPUT:
+		RETVAL
+
