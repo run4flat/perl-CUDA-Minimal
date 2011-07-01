@@ -14,7 +14,7 @@ require Exporter;
 our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS = (
-	'error' => [qw(ThereAreCudaErrors GetLastError)],
+	'error' => [qw(ThereAreCudaErrors GetLastError PeekAtLastError DeviceReset)],
 	'memory' => [qw(Free Malloc MallocFrom Transfer)],
 	'util' => [qw(SetSize Sizeof)],
 	'sync' => [qw(ThreadSynchronize)],
@@ -142,12 +142,11 @@ PDL. (However, it does not require that you have PDL installed to use it.)
 It does not try to wrap all possible CUDA-C functions, and it's not even
 up-to-date, even on the day of its release. I said nice, not
 complete. These bindings were originally written months before CUDA Toolkit
-4.0 was released, and it seems like a number of functions were added to the
-API that makes some of the work-arounds in this API a bit, well, out-of-date.
-Still, they work, and that's the point. In fact, this does not even provide
+4.0 was released, and although I've incorporated some new features, some of
+them use old work-arounds. In fact, this does not even provide
 any CUDA kernels, or even a framework for writing them.
 
-Enough with the limitations of this module. The point is that *IT WORKS*.
+Enough with the limitations of this module. The point is that B<IT WORKS>.
 Furthermore, it has a nice interface and provides some degree of object
 awareness, so that you can create object interfaces to device and host memory
 and pass those objects to functions like C<MallocFrom>, C<Free>, and C<Transfer>.
@@ -184,10 +183,10 @@ is important for benchmarking
 
 =item error checking
 
-L</GetLastError> and L</ThereAreCudaErrors> provide methods for checking on and
-getting the most recent errors; also, all function calls except
-L</ThreadSynchronize>, L</GetLastError>, and L</ThereAreCudaErrors> croak when
-they encounter an error
+L</GetLastError>, L</ThereAreCudaErrors>, and L<PeekAtLastError> provide methods
+for checking on and getting the most recent errors; also, all function calls
+except L</ThreadSynchronize>, L</GetLastError>, L</ThereAreCudaErrors>,
+and L</PeekAtLastError> croak when they encounter an error
 
 =back
 
@@ -315,20 +314,30 @@ Usage example:
 
 sub Malloc ($) {
 	croak('Cannot call Malloc in a void context') unless defined wantarray;
-	# Special object processing:
-	if (is_an_object $_[0]) {
-		my $object = shift;
-		if (my $func = $object->can('nbytes')) {
-			return _malloc($func->($object));
+	my $to_return = eval {
+		# Special object processing:
+		if (is_an_object $_[0]) {
+			my $object = shift;
+			if (my $func = $object->can('nbytes')) {
+				return _malloc($func->($object));
+			}
+			else {
+				croak('Attempting to allocate memory from an object of type '
+					. ref($object) . ' but that class does not know how to say nbytes');
+			}
 		}
-		else {
-			croak('Attempting to allocate memory from an object of type '
-				. ref($object) . ' but that class does not know how to say nbytes');
-		}
-	}
-	# otherwise, just call _malloc, which will assume it's a packed string and
-	# go from there.
-	return _malloc($_[0]);
+		# otherwise, just call _malloc, which will assume it's a packed string and
+		# go from there.
+		
+		return _malloc($_[0]);
+	};
+	
+	return $to_return if defined $to_return;
+	
+	# If we've reached here, then something must be wrong. Clean up and
+	# recroak:
+	$@ =~ s/ at .*?\d\d\d\.\n$//;
+	croak($@);
 }
 
 =head2 Free (device-pointer, device-pointer, ...)
@@ -805,13 +814,20 @@ This is a simple wrapper for C<cudaGetLastError>. It returns a string describing
 the last error. It returns exactly what CUDA tells it to say, so as of the time
 of writing, if there were no errors, it returns the string 'no errors'. It also
 clears the error so that further CUDA function calls will not croak. (But see
-L</Unspecified launch failure> below.) For a slightly more Perlish error
-checker, see L</ThereAreCudaErrors>.
+L</Unspecified launch failure> below.) To get the name of the error without
+resetting the error condition, see L</PeekAtLastError>. I you just want to know
+if CUDA is in an error state, use L</ThereAreCudaErrors>.
+
+=head2 PeekAtLastError
+
+This is a simple wrapper for C<cudaPeekAtLastError>. It returns a string describing
+the last error, as described in L<GetLastError>. Unlike the L<GetLastError>,
+C<PeekAtLastError> does not clear the error.
 
 =head2 ThereAreCudaErrors
 
-I will admit, this function is a bit odd. First I will explain the name.
-I named it this way so that the following statements reads as proper Enlish:
+I will admit, the name of this function is a bit odd.
+I named it this way so that the following statements read as proper Enlish:
 
  if (ThereAreCudaErrors) {
      # Do some error handling.
@@ -822,42 +838,10 @@ or this:
  return ($the_answer) unless ThereAreCudaErrors;
  # handle errors here and perhaps return something else
 
-In other words, if there no are errors, this function returns false. If there
-are errors, it returns true.
+C<ThereAreCudaErrors> is essentially a boolean verion of L<PeekAtLastError> 
+which returns true when an error has occurred and false otherwise.
 
-This function has an unusual (and probably shunned) side-effect. Besides
-returning a true value when it encounters an error, it also sets C<$@> with
-a string describing the error. Note that it only sets C<$@> if there was an
-error; otherwise it does not touch C<$@>.
-
-The reason for this unusual side-effect
-is because C<ThereAreCudaErrors> uses L</GetLastError> internally to determine
-if there was an error. However, calling that function also clears the
-CUDA error state. In other words, you might have wanted to use the following:
-
- # WRONG:
- if (ThereAreCudaErrors) {
-     my $error_string = GetLastError;
-     # process the error...
- }
-
-But as written the call to L</GetLastError> will always return 'no errors'.
-By setting C<$@>, C<ThereAreCudaErrors> lets you get the error string if it
-exists:
-
- # RIGHT:
- if (ThereAreCudaErrors) {
-     print "Got error $@... investigating\n";
-     # process the error...
- }
-
-If you don't like clobbering C<$@>, then you probably know enough to localize
-C<$@>, or  you can simply use the following code instead:
-
- my $error_string = GetLastError;
- return ($the_answer) if $error_string eq 'no errors';
-
-Calling this function will clear CUDA's error status, if there was an error,
+Calling this function will not clear CUDA's error status, if there was an error,
 but see L</Unspecified launch failure> below.
 
 =over
@@ -868,19 +852,30 @@ none
 
 =item Output
 
-A false value if no errors or a true value if there were; also sets C<$@>
-with the error string if there was an error
+A false value if no errors or a true value if there were
 
 =back
 
 =cut
 
 sub ThereAreCudaErrors () {
-	my $error = GetLastError();
-	return if $error eq 'no error';
-	$@ = $error;
-	return 1;
+	return PeekAtLastError() ne 'no error';
 }
+
+=head2 DeviceReset
+
+As described in L</Unspecified launch failure>, run time errors in your kernel
+will cause all future kernel launches to fail, as well. The only method of which
+I am aware for recovering from this is to reset your device by calling 
+C<DeviceReset>.
+
+However, resetting your device is not as simple as you might hope: it also
+invalidates all your device pointers. The upshot is that if a kernel launch
+fails, you can only proceed by starting from scratch or by copying the data
+currently on your device back to the CPU (and back to the GPU after the
+DeviceReset). 
+
+=cut
 
 require XSLoader;
 XSLoader::load('CUDA::Minimal', $VERSION);
@@ -1311,31 +1306,24 @@ __END__
 
 =head1 Unspecified launch failure
 
+working here
+
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
-C<cudaGetLastError>, which happens when any of these functions croak, or when
-you call L</GetLastError> or L</ThereAreCudaErrors>. With one exception, later
-checks for CUDA errors should be ok unless they actually had trouble. The
+C<cudaGetLastError>, which happens when any of the functions in CUDA::Minimum
+croak, or when you manually call L</GetLastError>. With one exception, later
+checks for CUDA errors should be ok unless B<they> actually had trouble. The
 exception is the C<unspecified launch failure>, which will cause all further
 kernel launches to fail with C<unspecified launch failure>. You can still copy
-memory to and from the device, but kernel launches will fail. As far as I know,
-the only way to clear that error is to quit and restart your process.
+memory to and from the device, but kernel launches will fail. The only way to
+recover from this problem without completely quitting the program is to call
+L</DeviceReset>. However, that will also invalidate your device pointers. In
+other words, recovery from a failed kernel launch is very messy.
 
 The best solution to this, in my opinion, is to make sure you have rock-solid
 input validation before invoking kernels. If your kernels only know how to
 process arrays that have lengths that are powers of 2, make sure to indicate
 that in your documentation, and validate the length before actually invoking the
 kernel. If your input to your kernels are good, this should not be a problem.
-
-On the other hand, if you just can't find the bug in your invocation and need to
-ship your code, you might be able to solve this with a multi-threaded approach,
-or with forks. In that case you would have a parent process that spawns a child
-process to invoke the kernels. If a kernel invocation went bad, the child could
-pull all the important data off the device and save it in thread-shared host
-memory, or to disk, and then die. If the child process ended prematurely, the
-parent process could attempt to recover and spawn a new child process. However,
-I do not have any multi-threaded tests in the test suite, so I can't even
-promise that a multi-threaded approach would work. Best of luck to you if you
-try this route, but I do not recommend it.
 
 =head1 EXPORTS
 
@@ -1380,8 +1368,8 @@ want L</ThreadSynchronize>, which you get by either of the following:
 
 =head2 Error functions
 
-If you want to have access to the error-handling functions L</GetLastError>
-and L</ThereAreCudaErrors>, you can use the C<:error> tag:
+If you want to have access to the error-handling functions L</GetLastError>,
+L</PeekAtLastError>, and L</ThereAreCudaErrors>, you can use the C<:error> tag:
 
  use CUDA::Minimal qw(:error);
 
@@ -1397,11 +1385,10 @@ C<:util> tag:
 
 =over
 
-=item Proof read the documentation
+=item Proofread the documentation
 
 For example, I'm not sure if all the warnings and error messages for the PDL
-methods are documented at the moment. It's simply a matter of reading through
-the code, but I'm trying to push this out as quickly as possible.
+methods are documented at the moment.
 
 =item Update the test suite
 

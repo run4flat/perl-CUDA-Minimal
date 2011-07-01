@@ -138,3 +138,15 @@ GetLastError()
 	OUTPUT:
 		RETVAL
 
+SV *
+PeekAtLastError()
+	CODE:
+		cudaError_t err = cudaPeekAtLastError();
+		RETVAL = newSVpv(cudaGetErrorString(err), 0);
+	OUTPUT:
+		RETVAL
+
+void
+DeviceReset()
+	CODE:
+		cudaDeviceReset();

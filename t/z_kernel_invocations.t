@@ -1,4 +1,4 @@
-use Test::More tests => 25;
+use Test::More tests => 28;
 
 # This file starts with z_ to ensure that it runs last.
 
@@ -14,10 +14,9 @@ use warnings;
 my $string = GetLastError;
 is($string, 'no error', "With no error, GetLastError should return 'no error'");
 ok(not (ThereAreCudaErrors), 'ThereAreCudaErrors should return false when there are none');
-ok($@ eq '', 'ThereAreCudaErrors does not set $@ when there are no problems');
 # Make sure the kernel that's supposed to always succeed does, in fact, succeed:
 CUDA::Minimal::Tests::succeed_test();
-ok(not (defined ThereAreCudaErrors), 'succeed_test does not set a CUDA error');
+ok(not (ThereAreCudaErrors), 'succeed_test does not set a CUDA error');
 
 # Create a collection of values to sum and copy them to the device:
 my $N_elements = 1024;
@@ -51,8 +50,6 @@ CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, 'single block sine-
 CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '32 block sine-sum', 32);
 CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '1024,32 block sine-sum', 1024, 32);
 
-# Don't forget to clean up:
-Free($dev_ptr);
 
 
 
@@ -60,29 +57,42 @@ Free($dev_ptr);
 # Finish by running the failure test. This, among other things, is supposed to
 # ensure that the documentation regarding the unspecified launch failure (for
 # kernel invocations after a failed kernel launch) is correct. If all the tests
-# after the first two fail, they should be modified to at least test
-# GetLastError and the documentation should be updated accordingly.
+# after the first one fails, the documentation should be updated accordingly.
 
 # Run the kernel that is supposed to fail and see what we get:
 CUDA::Minimal::Tests::fail_test();
 ThreadSynchronize();
 ok(ThereAreCudaErrors, "ThereAreCudaErrors returns a true value when an error occurs");
-# Check that ThereAreCudaErrors sets $@
-like($@, qr/unspecified/, 'ThereAreCudaErrors properly sets $@ on error');
-$@ = '';
 
-# After invoking ThereAreCudaErrors, further calls should return false (no errors)
-# until I run another kernel:
-ok(not (defined ThereAreCudaErrors), "ThereAreCudaErrors clears the last error");
+# ThereAreCudaErrors should return true until GetLastError,
+ok(ThereAreCudaErrors, "ThereAreCudaErrors does not clear the last error");
+
+# Should be able to peek at the error:
+like(PeekAtLastError, qr/unspecified/, 'PeekAtLastError correctly returns an unspecified launch failure');
+
+# ThereAreCudaErrors should return true until GetLastError,
+ok(ThereAreCudaErrors, "PeekAtLastError does not clear the last error");
+
+# Double-check the output of the error (and clear it):
+like(GetLastError, qr/unspecified/, "The failing kernel gives an unspecified launch failure");
+
+# further calls should return false (no errors) until I run another kernel:
+ok(not (ThereAreCudaErrors), "GetLastError clears the last error");
 
 # Check that the next kernel invocation trips an error
 CUDA::Minimal::Tests::succeed_test();
 ok(ThereAreCudaErrors, "Good kernels invoked after a failed kernel launch also fail");
-like($@, qr/unspecified/, 'ThereAreCudaErrors properly sets $@ on error');
-$@ = '';
 
 # Check the return value of GetLastError:
 CUDA::Minimal::Tests::succeed_test();
 like(GetLastError, qr/unspecified/, 'Further kernel invocations return an unspecified launch failure');
 
+# See if a device reset allows for later kernel launches:
+DeviceReset;
+CUDA::Minimal::Tests::succeed_test();
+ok(!ThereAreCudaErrors, 'Kernel invocations after DeviceReset succeed');
 
+# Check if the original device-allocated memory is still good.
+CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
+ThreadSynchronize;
+ok(ThereAreCudaErrors, 'Device resets invalidate previously allocated memory');
