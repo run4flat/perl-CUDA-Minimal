@@ -4,12 +4,6 @@
 
 #include "ppport.h"
 
-#include <cuda.h>
-
-#ifndef CUDA_VERSION 
-#define CUDA_VERSION 0
-#endif 
-
 MODULE = CUDA::Minimal		PACKAGE = CUDA::Minimal		
 
 void
@@ -152,6 +146,20 @@ PeekAtLastError()
 	OUTPUT:
 		RETVAL
 
+
+// Thanks to Kartik for the compiler-directive work-around code. I am removing
+// the DeviceReset bindings for now because they are only in the latest toolkit
+// (as of July 2011), and not appropriate for this module. However, conditional
+// bindings like these should show up in the driver wrapper, whenver that
+// appears.
+
+/*
+#include <cuda.h>
+
+#ifndef CUDA_VERSION 
+#define CUDA_VERSION 0
+#endif 
+
 SV *
 DeviceReset()
 	CODE:
@@ -165,3 +173,4 @@ DeviceReset()
 	OUTPUT:
 		RETVAL
 
+*/

@@ -14,7 +14,7 @@ require Exporter;
 our @ISA = qw(Exporter);
 
 our %EXPORT_TAGS = (
-	'error' => [qw(ThereAreCudaErrors GetLastError PeekAtLastError DeviceReset)],
+	'error' => [qw(ThereAreCudaErrors GetLastError PeekAtLastError)],
 	'memory' => [qw(Free Malloc MallocFrom Transfer)],
 	'util' => [qw(SetSize Sizeof)],
 	'sync' => [qw(ThreadSynchronize)],
@@ -862,21 +862,6 @@ sub ThereAreCudaErrors () {
 	return PeekAtLastError() ne 'no error';
 }
 
-=head2 DeviceReset
-
-As described in L</Unspecified launch failure>, run time errors in your kernel
-will cause all future kernel launches to fail, as well. The only method of which
-I am aware for recovering from this is to reset your device by calling 
-C<DeviceReset>.
-
-However, resetting your device is not as simple as you might hope: it also
-invalidates all your device pointers. The upshot is that if a kernel launch
-fails, you can only proceed by starting from scratch or by copying the data
-currently on your device back to the CPU (and back to the GPU after the
-DeviceReset). 
-
-=cut
-
 require XSLoader;
 XSLoader::load('CUDA::Minimal', $VERSION);
 
@@ -1306,8 +1291,6 @@ __END__
 
 =head1 Unspecified launch failure
 
-working here
-
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
 C<cudaGetLastError>, which happens when any of the functions in CUDA::Minimum
 croak, or when you manually call L</GetLastError>. With one exception, later
@@ -1315,9 +1298,17 @@ checks for CUDA errors should be ok unless B<they> actually had trouble. The
 exception is the C<unspecified launch failure>, which will cause all further
 kernel launches to fail with C<unspecified launch failure>. You can still copy
 memory to and from the device, but kernel launches will fail. The only way to
-recover from this problem without completely quitting the program is to call
-L</DeviceReset>. However, that will also invalidate your device pointers. In
-other words, recovery from a failed kernel launch is very messy.
+recover from this problem is to completely close the program.
+
+The CUDA Toolkit for versions beyond 4.1 provides a function called
+C<cudaDeviceReset>, which lets you reset the device without completely quitting
+the program. Because CUDA::Minimal is meant to be a set of simple and incomplete
+bindings, C<CUDA::Minimal> does not provide access to this function. If you find
+that you need this function, you can write your own bindings using L<Inline::C> 
+or incorporate such bindings into your own XS code. Note that calling
+C<cudaDeviceReset> also invalidates your device pointers, so that you must copy
+data off the device before resetting it. Put simply, recovery from a failed
+kernel launch is very messy.
 
 The best solution to this, in my opinion, is to make sure you have rock-solid
 input validation before invoking kernels. If your kernels only know how to

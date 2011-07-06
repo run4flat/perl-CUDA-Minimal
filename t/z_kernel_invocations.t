@@ -1,4 +1,4 @@
-use Test::More tests => 28;
+use Test::More tests => 26;
 
 # This file starts with z_ to ensure that it runs last.
 
@@ -86,13 +86,3 @@ ok(ThereAreCudaErrors, "Good kernels invoked after a failed kernel launch also f
 # Check the return value of GetLastError:
 CUDA::Minimal::Tests::succeed_test();
 like(GetLastError, qr/unspecified/, 'Further kernel invocations return an unspecified launch failure');
-
-# See if a device reset allows for later kernel launches:
-DeviceReset;
-CUDA::Minimal::Tests::succeed_test();
-ok(!ThereAreCudaErrors, 'Kernel invocations after DeviceReset succeed');
-
-# Check if the original device-allocated memory is still good.
-CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
-ThreadSynchronize;
-ok(ThereAreCudaErrors, 'Device resets invalidate previously allocated memory');
