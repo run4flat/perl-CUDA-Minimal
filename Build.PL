@@ -8,7 +8,7 @@ my $build = Module::Build->new(
 	module_name => 'CUDA::Minimal',
 	license => 'perl',
 	build_requires => {
-				'ExtUtils::nvcc' => '0.01',
+				'ExtUtils::nvcc' => '0.03',
 #				'ExtUtils::CBuilder' => '0',
 			},
 	requires => {
