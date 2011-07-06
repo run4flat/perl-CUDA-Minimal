@@ -1,6 +1,6 @@
 package CUDA::Minimal;
 
-use 5.010001;
+use 5.008_008;
 use strict;
 use warnings;
 use bytes;

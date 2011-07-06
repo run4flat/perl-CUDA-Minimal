@@ -19,8 +19,8 @@ my $build = Module::Build->new(
 	include_dirs => '.',
 );
 
-print "Compiler is ", $build->config('cc'), "\n";
-print "Linker is ", $build->config('ld'), "\n";
+#print "Compiler is ", $build->config('cc'), "\n";
+#print "Linker is ", $build->config('ld'), "\n";
 
 $build->create_build_script;
 

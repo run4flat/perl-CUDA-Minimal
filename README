@@ -29,6 +29,10 @@ Linux using gcc. However, not all is finished and in fact it is known
 to work on Ubuntu 10.10, only. If you want to see CUDA::Minimal on your
 favorite platform, please help improve ExtUtils::nvcc!
 
+Furthermore, I believe this works with Perl 5.8.8. It may work with versions
+lower than 5.8.8, but I cannout easily tell. At any rate, the module requires
+5.8.8 to compile.
+
 COPYRIGHT AND LICENCE
 
 Copyright (C) 2010-2011 by David Mertens
