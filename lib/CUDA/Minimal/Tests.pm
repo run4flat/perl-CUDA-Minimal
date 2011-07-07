@@ -20,7 +20,7 @@ at your option, any later version of Perl 5 you may have available.
 
 package CUDA::Minimal::Tests;
 
-use 5.010001;
+use 5.008_008;
 use strict;
 use warnings;
 BEGIN {
