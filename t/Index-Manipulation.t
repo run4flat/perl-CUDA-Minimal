@@ -8,10 +8,9 @@ ok(Sizeof(c => 20) == 20, "20 chars take 20 bytes");
 
 eval{ Sizeof(20 => 'c') };
 like($@, qr/Bad size spec: second argument/, "Sizeof croaks for bad spec string");
-$@ = '';
+
 eval{ Sizeof(0 => 20) };
 like($@, qr/Bad pack-string/, "Sizeof croaks for bad pack type");
-$@ = '';
 
 # Create a packed array of 10 sequential doubles:
 my $data = pack 'd*', 1..10;

@@ -12,10 +12,8 @@ my $host_array = pack ('f*', 1..$N_elements);
 # Memory.t tested Malloc and Free, so I will assume those work.
 
 # Test MallocFrom, which exercises Transfer:
-$@ = '';
 my $dev_ptr = eval{ MallocFrom($host_array) };
 ok($@ eq '', 'MallocFrom works with reasonable data');
-$@ = '';
 
 # Get a scalar into which I can pull from the device
 my $results = $host_array;
@@ -33,19 +31,16 @@ ok(unpack('f', $test_val) == $offset+1, "Position $offset has value " . ($offset
 eval{ Transfer($dev_ptr => $test_val, 200) };
 like($@, qr/Attempting to transfer more data/
 	, 'Transfer does not attempt to copy more data than the scalar can hold');
-$@ = '';
 
 # Test that scalar-to-scalar transfers are not allowed
 eval{ Transfer($host_array => $test_val) };
 like($@, qr/both are host arrays/
 	, 'Transfers betwen two scalars is not allowed');
-$@ = '';
 
 # Test device-to-device transfers without a specified number of bytes:
 eval{ Transfer($dev_ptr => $dev_ptr + Sizeof(f=>1)) };
 like($@, qr/device-to-device transfers/
 	, "Device-to-device transfers without a specified number of bytes croaks");
-$@ = '';
 
 # Test that you can specify the number of bytes for transfers involving scalars:
 # Make an array filled with -3:
@@ -53,11 +48,11 @@ my $second_host_array = pack 'f*', map {-3} 1..20;
 # Only copy the first five of those values:
 eval{ Transfer($second_host_array => $dev_ptr, $sizeof_float * 5) };
 ok($@ eq '', "Specifying the number of bytes for transfers with host doesn't croak");
-$@ = '';
+
 # Get the first ten of those values back:
 eval{ Transfer($dev_ptr => $results, 10 * $sizeof_float) };
 ok($@ eq '', "Specifying the number of bytes for transfers with host doesn't croak");
-$@ = '';
+
 # check that they are what they should be:
 my $diff = 0;
 my @results = unpack('f10', $results);

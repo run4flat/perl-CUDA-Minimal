@@ -41,8 +41,7 @@ SKIP:
 		"Utility function correctly identifies mmap");
 }
 
-# Clear any error and remove the temporary file:
-$@ = '';
+# remove the temporary file:
 unlink $test_fname;
 unlink "$test_fname.hdr";
 
@@ -68,15 +67,12 @@ my $length = 20;
 $data = sequence($length);
 
 # Check that data allocation doesn't croak:
-$@ = '';
 my $dev_ptr = eval {Malloc($data) };
 ok($@ eq '', "Memory allocation from a piddle works");
-$@ = '';
 
 # Copy it to the device:
 eval {Transfer($data => $dev_ptr) };
 ok($@ eq '', "Memory transfers from a piddle do not croak");
-$@ = '';
 
 # Make new memory and make sure the two piddles do not compare well:
 my $new_data = zeroes($length);
@@ -86,7 +82,6 @@ ok(not (all ($new_data == $data)), "Piddles do not initially agree");
 eval {Transfer($dev_ptr => $new_data) };
 ok($@ eq '', "Memory transfers to a piddle do not croak");
 diag ($@) if $@;
-$@ = '';
 
 # Compare the results:
 ok(all ($new_data == $data), "Memory transfer did not copy garbage");
@@ -99,7 +94,6 @@ $slice = $data(2:5);
 # Try copying elements 2-5 from $data to the start of the device memory:
 eval {Transfer($slice => $dev_ptr) };
 ok($@ eq '', "Memory transfer from a slice does not croak");
-$@ = '';
 
 # Verify that the copy did not sever the slice from the parent:
 $slice .= -3;
@@ -129,7 +123,6 @@ ok(all($data(12:15) == $should_be), "Transfer to a slice works")
 
 # There once was a time when a second transfer to a piddle failed.
 # This tests that:
-$@ = '';
 eval {Transfer($dev_ptr => $data(12:15))};
 ok($@ eq '', "Second transfer to pdl does not croak")
 	or diag($@);
