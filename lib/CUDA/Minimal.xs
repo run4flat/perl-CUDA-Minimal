@@ -147,6 +147,8 @@ PeekAtLastError()
 		RETVAL
 
 
+=pod
+
 // Thanks to Kartik for the compiler-directive work-around code. I am removing
 // the DeviceReset bindings for now because they are only in the latest toolkit
 // (as of July 2011), and not appropriate for this module. However, conditional
@@ -174,3 +176,5 @@ DeviceReset()
 		RETVAL
 
 */
+
+=cut
