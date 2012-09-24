@@ -5,9 +5,7 @@ use strict;
 use warnings;
 use bytes;
 use Carp;
-
-# Needed to distinguish refs from objects
-use attributes 'reftype';
+use Scalar::Util qw(blessed);
 
 require Exporter;
 
@@ -31,11 +29,6 @@ our $VERSION = '0.01';
 #######################
 # Perl-side functions #
 #######################
-
-# an internal boolean routine that checks if the argument is an object:
-sub is_an_object ($) {
-	return ref($_[0]) and ref($_[0]) ne reftype($_[0])
-}
 
 =head1 NAME
 
@@ -316,14 +309,14 @@ sub Malloc ($) {
 	croak('Cannot call Malloc in a void context') unless defined wantarray;
 	my $to_return = eval {
 		# Special object processing:
-		if (is_an_object $_[0]) {
+		if (blessed $_[0]) {
 			my $object = shift;
 			if (my $func = $object->can('nbytes')) {
 				return _malloc($func->($object));
 			}
 			else {
 				croak('Attempting to allocate memory from an object of type '
-					. ref($object) . ' but that class does not know how to say nbytes');
+					. blessed($object) . ' but that class does not know how to say nbytes');
 			}
 		}
 		# otherwise, just call _malloc, which will assume it's a packed string and
@@ -428,7 +421,7 @@ sub Free {
 		# Use these to capture troubles with free, but still work on the
 		# rest of the device memory:
 		eval {
-			if (is_an_object $_) {
+			if (blessed $_) {
 				# If it's an object that knows how to free itself, let it free
 				# itself:
 				if ($_->can('free_dev_memory')) {
@@ -444,7 +437,7 @@ sub Free {
 				# an error (which is caught 10 lines below)
 				else {
 					die("Argument $i in the list looks like an object of type "
-							. ref($_)
+							. blessed($_)
 							. ", which does not appear to mimic device memory\n");
 				}
 			}
@@ -556,13 +549,13 @@ working here - new errors:
 sub Transfer ($$;$$) {
 	# If the first argument is an object and it mimics device memory, get the
 	# device memory and call Transfer again:
-	if (is_an_object($_[0]) and $_[0]->can('get_dev_ptr')) {
+	if ( blessed $_[0] and $_[0]->can('get_dev_ptr') ) {
 		my $object = shift;
 		unshift @_, $object->get_dev_ptr;
 		goto &Transfer;
 	}
 	# Repeat for the second argument:
-	if (is_an_object($_[1]) and $_[1]->can('get_dev_ptr')) {
+	if ( blessed $_[1] and $_[1]->can('get_dev_ptr') ) {
 		splice @_, 1, 1, $_[1]->get_dev_ptr;
 		goto &Transfer;
 	}
@@ -570,13 +563,13 @@ sub Transfer ($$;$$) {
 	# If I'm here, I know that any mimicking of the device memory should have
 	# been handled. Now I look to see if anything mimics host memory and call
 	# that object's send_to function:
-	if (is_an_object($_[0])) {
+	if (blessed($_[0])) {
 		my $send_to_func = $_[0]->can('send_to');
 		croak("First argument to Transfer is an object, but it doesn't mimic either device or host memory")
 			unless $send_to_func;
 		goto &$send_to_func;
 	}
-	if (is_an_object($_[1])) {
+	if (blessed($_[1])) {
 		my $get_from_func = $_[1]->can('get_from');
 		croak("Second argument to Transfer is an object, but it doesn't mimic either device or host memory")
 			unless $get_from_func;
@@ -687,10 +680,10 @@ don't quite understand:
 sub Sizeof ($;$) {
 	# If it's an object, return the value of its nbytes method, or croak if
 	# no such method exists:
-	if (@_ == 1 and is_an_object($_[0])) {
+	if (@_ == 1 and blessed($_[0])) {
 		my $obj = shift;
 		return $obj->nbytes if $obj->can('nbytes');
-		croak("Argument to Sizeof is an object of type " . ref($obj)
+		croak("Argument to Sizeof is an object of type " . blessed($obj)
 					. ", but it does not mimic host memory");
 	}
 	# Otherwise if they supplied only one argument, assume it's a packed string
@@ -762,13 +755,13 @@ sub SetSize ($$;$) {
 	}
 
 	# Delegate object methods:
-	if (is_an_object($_[0])) {
+	if (blessed($_[0])) {
 		my $object = shift;
 		if ($object->can('n_bytes')) {
 			return $object->n_bytes($new_length);
 		}
 		else {
-			croak("SetSize called on an object of type " . ref($object)
+			croak("SetSize called on an object of type " . blessed($object)
 				. ", but it does not mimic host memory");
 		}
 	}
