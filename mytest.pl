@@ -12,7 +12,8 @@ say "Length of test scalar is ", length($test_scalar);
 my $array = pack('f*', 1..10);
 say "Length of packed array is ", length($array);
 my $dev_ptr = Malloc($array);
-say "Device pointer's memory address is $dev_ptr";
+my $to_print = $dev_ptr;
+say "Device pointer's memory address is $to_print";
 END {
 	# Free the memory when it's all over
 	Free($dev_ptr);

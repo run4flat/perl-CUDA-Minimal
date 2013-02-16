@@ -2,46 +2,59 @@ use Module::Build;
 
 use strict;
 use warnings;
-use ExtUtils::nvcc;
+#use ExtUtils::nvcc;
 
-use Module::Build;
 my $class = Module::Build->subclass(
 	class => 'My::Builder',
 	code => q{
-		sub compile_xs {
-			my ($self, $file, %args) = @_;
+		sub new {
+			my $class = shift;
+			# Build the M::B object in the usual way:
+			my $self = $class->SUPER::new(@_);
+			 
+			# Override some of the stuff important for PDL:
+			$self->build_elements([qw(PL support cu pm xs share_dir pod script)]);
 			
-			# Call the xs converter
-			Module::Build::Base::compile_xs($self, $file, %args);
+			$self->extra_linker_flags(
+				@{$self->extra_linker_flags()},
+				'-L/usr/local/cuda/lib', 
+				'-lcudart',
+			);
 			
-			# Fiddle with the generated C file a little
-			print "cleaning troubling code in $file\n";
+			return $self;
+		}
+		
+		sub process_cu_files {
+			my $self = shift;
+			# Get all the .cu files in lib
+			my $files = $self->rscan_dir('lib', qr/\.cu$/);
+			# process each in turn
+			$self->process_cu($_) foreach (@$files);
+		}
+		sub process_cu {
+			# Based heavily on process_xs
+			my ($self, $file) = @_;
+			 
+			# Build the object file name
+			my $o_file = $file . 'o';
 			
-			# Get the c file name from the xs file name
-			my $c_file = $file;
-			$c_file =~ s/xs$/c/;
+			# Build it with nvcc
+			my @cmd = ('nvcc', '-o', $o_file, '-c', $file);
+			print join(' ', @cmd), "\n";
+			$self->do_system(@cmd);
 			
-			# Back up the current c file so we can read it
-			rename $c_file => "$c_file.backup";
+			$self->extra_linker_flags(
+				$o_file,
+				@{$self->extra_linker_flags()},
+			);
 			
-			# Open handles to the input and output files
-			open my $in_fh, '<', "$c_file.backup";
-			open my $out_fh, '>', $c_file;
-			
-			# Copy everything except the lines involving PL_unitcheckav
-			while(my $line = <$in_fh>) {
-				next if $line =~ /PL_unitcheckav/;
-				print $out_fh $line;
-			}
-			
-			# All done; cleanup files
-			close $in_fh;
-			close $out_fh;
-			unlink "$c_file.backup";
+			$self->add_to_cleanup($o_file);
 		}
 	},
 );
 
+
+#my $build = Module::Build->new(
 my $build = $class->new(
 	module_name => 'CUDA::Minimal',
 	license => 'perl',
@@ -53,7 +66,7 @@ my $build = $class->new(
 				'perl' => '0',
 			},
 	dist_author => 'David Mertens <dcmertens.perl@gmail.com>',
-	config => {ExtUtils::nvcc::MB},
+	#config => {ExtUtils::nvcc::MB('verbose')},
 	include_dirs => '.',
 );
 

@@ -3,6 +3,7 @@
 #include "XSUB.h"
 
 #include "ppport.h"
+#include "Minimal.h"
 
 MODULE = CUDA::Minimal		PACKAGE = CUDA::Minimal		
 
@@ -14,11 +15,11 @@ _free(SV * dev_ptr_SV)
 			// Cast the SV to a device pointer:
 			void * dev_ptr = INT2PTR(void*, SvIV(dev_ptr_SV));
 			// Free the memory:
-			cudaError_t err = cudaFree(dev_ptr);
+			int err = myCudaFree(dev_ptr);
 			// Croak on failure.
-			if (err != cudaSuccess)
-				Perl_croak(aTHX_ "Unable to free memory on the device: %s"
-							, cudaGetErrorString(err));
+			if (myCudaFailed(err))
+				croak("Unable to free memory on the device: %s"
+							, myCudaGetErrorString(err));
 			// Set SV to have a value of zero to prevent accidental double frees:
 			sv_setiv(dev_ptr_SV, 0);
 		}
@@ -28,7 +29,7 @@ _malloc(SV * data_SV)
 	CODE:
 		// First thing's first: guard against calls in void context:
 		if (GIMME_V == G_VOID)
-			Perl_croak(aTHX_ "Cannot call Malloc in void context");
+			croak("Cannot call Malloc in void context");
 		void * dev_ptr = 0;
 		size_t data_len = 0;
 		// Check the input arguments:
@@ -42,11 +43,11 @@ _malloc(SV * data_SV)
 			data_len = (size_t)SvIV(data_SV);
 		}
 		// Allocate the memory:
-		cudaError_t err = cudaMalloc(&dev_ptr, data_len);
+		int err = myCudaMalloc(&dev_ptr, data_len);
 		// Check for errors:
-		if (err != cudaSuccess)
-			Perl_croak(aTHX_ "Unable to allocate %lu bytes on the device: %s"
-						, (long unsigned)data_len, cudaGetErrorString(err));
+		if (myCudaFailed(err))
+			croak("Unable to allocate %lu bytes on the device: %s"
+						, (long unsigned)data_len, myCudaGetErrorString(err));
 		// Set the return:
 		RETVAL = newSViv(PTR2IV(dev_ptr));
 	OUTPUT:
@@ -62,119 +63,109 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 		size_t length = 0;
 		size_t host_offset = 0;
 		size_t host_length = 0;
-		enum cudaMemcpyKind kind;
+		enum myCudaMemcpyKind kind;
 		
+	// dump the current contents
+	printf("Source SV (at %p):\n", src_SV);
+	sv_dump(src_SV);
+	printf("Destination SV (at %p):\n", dst_SV);
+	sv_dump(dst_SV);
+	
 		// Get the specified length and host offset if they passed it in:
 		if (items > 2) length = (size_t)SvIV(ST(2));
-		if (items > 3) host_offset = (size_t)SvIV(ST(2));
+		if (items > 3) host_offset = (size_t)SvIV(ST(3));
 		
 		// Determine if either of the two SVs are the host memory:
-		if (SvTYPE(dst_SV) == SVt_PV && SvTYPE(src_SV) == SVt_PV) {
+		if (SvPOK(dst_SV) && SvPOK(src_SV)) {
 			// We can't have both of them looking like host memory:
-			Perl_croak(aTHX_ "Transfer requires one or more of %s\n%s"
+			croak("Transfer requires one or more of %s\n%s"
 							, "the arguments to be a device pointer"
 							, "but it looks like both are host arrays");
 		}
-		else if (SvTYPE(dst_SV) == SVt_PV) {
+		else if (SvPOK(dst_SV)) {
 			// Looks like the destination is host memory.
-			kind = cudaMemcpyDeviceToHost;
+			kind = DeviceToHost;
 			host_length = (size_t)SvCUR(dst_SV) - host_offset;
+			// set the source (device) and destiantion (host)
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
 			dst_ptr = SvPVX(dst_SV) + host_offset;
-			// Make sure the offset is shorter than the host length:
+			
+			// Get length and make sure the offset is shorter than the host length:
 			if (host_length <= 0)
-				Perl_croak(aTHX_ "Host offset must be less than the host's length");
+				croak("Host offset must be less than the host's length");
 		}
-		else if (SvTYPE(src_SV) == SVt_PV) {
+		else if (SvPOK(src_SV)) {
 			// Looks like the source is host memory.
-			kind = cudaMemcpyHostToDevice;
+			kind = HostToDevice;
 			host_length = (size_t)SvCUR(src_SV) - host_offset;
-			src_ptr = SvPVX(src_SV) + host_offset;
+			
+			// Set the source (host) and destination (device)
+	printf("src address is %p\n", SvPVX(src_SV));
+			src_ptr = SvPVX(src_SV);
+	if (src_ptr == 0) {printf("Just got null src pointer?\n");
+		sv_dump(src_SV);}
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
-			// Make sure the offset is shorter than the host length:
+			
+			// Get length and make sure the offset is shorter than the host length:
+		// host_avail_length = host_full_length - host_offset;
 			if (host_length <= 0)
-				Perl_croak(aTHX_ "Host offset must be less than the host's length");
+				croak("Host offset must be less than the host's length");
 		}
 		else {
 			// Looks like both the source and destination are device pointers.
-			kind = cudaMemcpyDeviceToDevice;
+			kind = DeviceToDevice;
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
 			if (host_offset > 0) {
-				Perl_croak(aTHX_ "Host offsets are not allowed for %s"
+				croak("Host offsets are not allowed for %s"
 						, "device-to-device transfers");
 			}
 		}
 		
 		// Make sure that they provided a length of some sort
 		if (length == 0 && host_length == 0)
-			Perl_croak(aTHX_ "You must provide the number of bytes %s"
+			croak("You must provide the number of bytes %s"
 						, "for device-to-device transfers");
 		
 		// Make sure the requested length does not exceed the host's length
 		if (host_length > 0 && length > host_length)
-			Perl_croak(aTHX_ "Attempting to transfer more data %s"
+			croak("Attempting to transfer more data %s"
 						, "than the host can accomodate");
 		
 		// Use the host length if no length was explicitly given:
 		if (length == 0) length = host_length;
 		
+		// Ensure we don't have null pointers
+		if (dst_ptr == 0)
+			croak("Attempting to transfer to a null pointer");
+		if (src_ptr == 0)
+			croak("Attempting to transfer from a null pointer");
+		
 		// Perform the copy and check for errors:
-		cudaError_t err = cudaMemcpy(dst_ptr, src_ptr, length, kind);
-		if (err != cudaSuccess)
-			Perl_croak(aTHX_ "Unable to copy memory: %s"
-						, cudaGetErrorString(err));
+	printf("Copying to destination %p from source at %p\n",
+	dst_ptr, src_ptr);
+		int err = myCudaMemcpy(dst_ptr, src_ptr, length, kind);
+		if (myCudaFailed(err))
+			croak("Unable to copy memory: %s"
+						, myCudaGetErrorString(err));
 
 void
 ThreadSynchronize()
 	CODE:
-		cudaThreadSynchronize();
+		myCudaThreadSynchronize();
 
 SV *
 GetLastError()
 	CODE:
-		cudaError_t err = cudaGetLastError();
-		RETVAL = newSVpv(cudaGetErrorString(err), 0);
+		int err = myCudaGetLastError();
+		RETVAL = newSVpv(myCudaGetErrorString(err), 0);
 	OUTPUT:
 		RETVAL
 
 SV *
 PeekAtLastError()
 	CODE:
-		cudaError_t err = cudaPeekAtLastError();
-		RETVAL = newSVpv(cudaGetErrorString(err), 0);
+		int err = myCudaPeekAtLastError();
+		RETVAL = newSVpv(myCudaGetErrorString(err), 0);
 	OUTPUT:
 		RETVAL
-
-
-=pod
-
-// Thanks to Kartik for the compiler-directive work-around code. I am removing
-// the DeviceReset bindings for now because they are only in the latest toolkit
-// (as of July 2011), and not appropriate for this module. However, conditional
-// bindings like these should show up in the driver wrapper, whenver that
-// appears.
-
-/*
-#include <cuda.h>
-
-#ifndef CUDA_VERSION 
-#define CUDA_VERSION 0
-#endif 
-
-SV *
-DeviceReset()
-	CODE:
-//CUDA greater then version 4.1 needed 
-#if (CUDA_VERSION > 4010 ) 
-		cudaError_t err = cudaDeviceReset();
-		RETVAL = newSVpv(cudaGetErrorString(err), 0);
-#else
-		RETVAL = newSVpv("Version too low for cudaDeviceReset", 0 );
-#endif
-	OUTPUT:
-		RETVAL
-
-*/
-
-=cut
