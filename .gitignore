@@ -9,3 +9,4 @@ blib/
 # Windows-specific files
 *.bat
 *.pdb
+*.cuo
