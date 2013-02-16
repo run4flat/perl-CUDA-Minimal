@@ -1,77 +1,43 @@
-use Module::Build;
-
 use strict;
 use warnings;
-#use ExtUtils::nvcc;
+use File::Spec;
+use Module::Build;
 
-my $class = Module::Build->subclass(
-	class => 'My::Builder',
-	code => q{
-		sub new {
-			my $class = shift;
-			# Build the M::B object in the usual way:
-			my $self = $class->SUPER::new(@_);
-			 
-			# Override some of the stuff important for PDL:
-			$self->build_elements([qw(PL support cu pm xs share_dir pod script)]);
-			
-			$self->extra_linker_flags(
-				@{$self->extra_linker_flags()},
-				'-L/usr/local/cuda/lib', 
-				'-lcudart',
-			);
-			
-			return $self;
-		}
-		
-		sub process_cu_files {
-			my $self = shift;
-			# Get all the .cu files in lib
-			my $files = $self->rscan_dir('lib', qr/\.cu$/);
-			# process each in turn
-			$self->process_cu($_) foreach (@$files);
-		}
-		sub process_cu {
-			# Based heavily on process_xs
-			my ($self, $file) = @_;
-			 
-			# Build the object file name
-			my $o_file = $file . 'o';
-			
-			# Build it with nvcc
-			my @cmd = ('nvcc', '-o', $o_file, '-c', $file);
-			print join(' ', @cmd), "\n";
-			$self->do_system(@cmd);
-			
-			$self->extra_linker_flags(
-				$o_file,
-				@{$self->extra_linker_flags()},
-			);
-			
-			$self->add_to_cleanup($o_file);
-		}
-	},
-);
+# Get nvcc's path
 
-
-#my $build = Module::Build->new(
-my $build = $class->new(
+my $build = Module::Build->new(
 	module_name => 'CUDA::Minimal',
 	license => 'perl',
 	build_requires => {
-				'ExtUtils::nvcc' => '0.03',
-#				'ExtUtils::CBuilder' => '0',
+				'ExtUtils::CBuilder' => '0',
 			},
 	requires => {
 				'perl' => '0',
 			},
 	dist_author => 'David Mertens <dcmertens.perl@gmail.com>',
-	#config => {ExtUtils::nvcc::MB('verbose')},
-	include_dirs => '.',
+	include_dirs => ['.', get_cuda_dir('include')],
+	extra_linker_flags => [ '-L' . get_cuda_dir('lib'), '-lcudart'],
 );
-
-#print "Compiler is ", $build->config('cc'), "\n";
-#print "Linker is ", $build->config('ld'), "\n";
 
 $build->create_build_script;
 
+
+
+my $base_cuda_path;
+sub get_cuda_dir {
+	my $final_dir = shift;
+	
+	# Find the location of nvcc, and one directori up
+	if (not defined $base_cuda_path) {
+		my ($nvcc_dir) =	grep { -e $_ }
+							map  { File::Spec->catfile($_,'nvcc') }
+							File::Spec->path;
+		die "Unable to find nvcc in your current path\n"
+			unless defined $nvcc_dir;
+		my ($volume, $directories) = File::Spec->splitpath($nvcc_dir);
+		$directories = File::Spec->catdir($directories, '..');
+		$base_cuda_path = File::Spec->catpath($volume, $directories, '');
+	}
+	
+	return File::Spec->catdir($base_cuda_path, $final_dir);
+}
