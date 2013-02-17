@@ -1,7 +1,6 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
-#include "cuda_runtime_api.h"
 
 #include "ppport.h"
 
@@ -146,10 +145,7 @@ PeekAtLastError()
 		RETVAL = newSVpv(cudaGetErrorString(err), 0);
 	OUTPUT:
 		RETVAL
-<<<<<<< HEAD
-=======
 
 BOOT:
 #undef PERL_VERSION
 #define PERL_VERSION 0
->>>>>>> fix-mem-troubles
