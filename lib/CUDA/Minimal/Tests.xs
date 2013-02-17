@@ -21,10 +21,6 @@
 // a single threadblock to handle 34 gigafloats of data, so this should be safe:
 #define N_LAYERS 8
 
-// This is part of a hack prevent the BOOT section from being included in
-// Minimum.xs's boot section, an error I do not understand at all:
-#define TESTS_BOOT
-
 /////////////////
 // The kernels //
 /////////////////
@@ -215,16 +211,14 @@ MODULE = CUDA::Minimal::Tests		PACKAGE = CUDA::Minimal::Tests
 ########################
 
 BOOT:
-// This boot seciton does NOT belong in Minimal.c, but it somehow ends up there
-// anyway! This #ifdef prevents stupidity from happening:
-#ifdef TESTS_BOOT
+#undef PERL_VERSION
+#define PERL_VERSION 0
 	# Add the preprocessor constants to the namespace:
 	HV * stash;
 	stash = gv_stashpv("CUDA::Minimal::Tests", TRUE);
 	newCONSTSUB(stash, "N_THREADS",	newSViv( N_THREADS ));
 	newCONSTSUB(stash, "MIN_PER_BLOCK", newSViv( MIN_PER_BLOCK ));
 	newCONSTSUB(stash, "N_LAYERS", newSViv( N_LAYERS ));
-#endif
 
 ####################################
 # Kernel wrapper and Gold function #
@@ -286,7 +280,7 @@ float
 sum_reduce_gold (SV * data_SV)
 	PROTOTYPE: $
 	CODE:
-		float * data = (float*)SvPVX(data_SV);
+		float * data = (float*)sv_2pvbyte_nolen(data_SV);
 		int length = SvCUR(data_SV) / sizeof(float);
 		RETVAL = divide_and_conquer_sum(data, length);
 	OUTPUT:

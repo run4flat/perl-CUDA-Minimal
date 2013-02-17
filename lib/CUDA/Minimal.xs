@@ -81,7 +81,7 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 			kind = cudaMemcpyDeviceToHost;
 			host_length = (size_t)SvCUR(dst_SV) - host_offset;
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
-			dst_ptr = SvPVX(dst_SV) + host_offset;
+			dst_ptr = sv_2pvbyte_nolen(dst_SV) + host_offset;
 			// Make sure the offset is shorter than the host length:
 			if (host_length <= 0)
 				croak("Host offset must be less than the host's length");
@@ -90,7 +90,7 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 			// Looks like the source is host memory.
 			kind = cudaMemcpyHostToDevice;
 			host_length = (size_t)SvCUR(src_SV) - host_offset;
-			src_ptr = SvPVX(src_SV) + host_offset;
+			src_ptr = sv_2pvbyte_nolen(src_SV) + host_offset;
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
 			// Make sure the offset is shorter than the host length:
 			if (host_length <= 0)
@@ -146,3 +146,10 @@ PeekAtLastError()
 		RETVAL = newSVpv(cudaGetErrorString(err), 0);
 	OUTPUT:
 		RETVAL
+<<<<<<< HEAD
+=======
+
+BOOT:
+#undef PERL_VERSION
+#define PERL_VERSION 0
+>>>>>>> fix-mem-troubles

@@ -2,9 +2,12 @@ use strict;
 use warnings;
 use File::Spec;
 use Module::Build;
+<<<<<<< HEAD
 
 # Get nvcc's path
 
+=======
+>>>>>>> fix-mem-troubles
 my $build = Module::Build->new(
 	module_name => 'CUDA::Minimal',
 	license => 'perl',
@@ -18,6 +21,7 @@ my $build = Module::Build->new(
 	include_dirs => ['.', get_cuda_dir('include')],
 	extra_linker_flags => [ '-L' . get_cuda_dir('lib'), '-lcudart'],
 );
+<<<<<<< HEAD
 
 $build->create_build_script;
 
@@ -41,3 +45,6 @@ sub get_cuda_dir {
 	
 	return File::Spec->catdir($base_cuda_path, $final_dir);
 }
+=======
+$build->create_build_script;
+>>>>>>> fix-mem-troubles
