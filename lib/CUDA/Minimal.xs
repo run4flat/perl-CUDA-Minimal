@@ -80,7 +80,7 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 			kind = cudaMemcpyDeviceToHost;
 			host_length = (size_t)SvCUR(dst_SV) - host_offset;
 			src_ptr = INT2PTR(void*, SvIV(src_SV));
-			dst_ptr = SvPVX(dst_SV) + host_offset;
+			dst_ptr = sv_2pvbyte_nolen(dst_SV) + host_offset;
 			// Make sure the offset is shorter than the host length:
 			if (host_length <= 0)
 				Perl_croak(aTHX_ "Host offset must be less than the host's length");
@@ -89,7 +89,7 @@ _transfer(SV * src_SV, SV * dst_SV, ...)
 			// Looks like the source is host memory.
 			kind = cudaMemcpyHostToDevice;
 			host_length = (size_t)SvCUR(src_SV) - host_offset;
-			src_ptr = SvPVX(src_SV) + host_offset;
+			src_ptr = sv_2pvbyte_nolen(src_SV) + host_offset;
 			dst_ptr = INT2PTR(void*, SvIV(dst_SV));
 			// Make sure the offset is shorter than the host length:
 			if (host_length <= 0)
@@ -146,35 +146,6 @@ PeekAtLastError()
 	OUTPUT:
 		RETVAL
 
-
-=pod
-
-// Thanks to Kartik for the compiler-directive work-around code. I am removing
-// the DeviceReset bindings for now because they are only in the latest toolkit
-// (as of July 2011), and not appropriate for this module. However, conditional
-// bindings like these should show up in the driver wrapper, whenver that
-// appears.
-
-/*
-#include <cuda.h>
-
-#ifndef CUDA_VERSION 
-#define CUDA_VERSION 0
-#endif 
-
-SV *
-DeviceReset()
-	CODE:
-//CUDA greater then version 4.1 needed 
-#if (CUDA_VERSION > 4010 ) 
-		cudaError_t err = cudaDeviceReset();
-		RETVAL = newSVpv(cudaGetErrorString(err), 0);
-#else
-		RETVAL = newSVpv("Version too low for cudaDeviceReset", 0 );
-#endif
-	OUTPUT:
-		RETVAL
-
-*/
-
-=cut
+BOOT:
+#undef PERL_VERSION
+#define PERL_VERSION 0
