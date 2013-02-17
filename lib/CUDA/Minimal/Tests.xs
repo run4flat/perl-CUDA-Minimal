@@ -280,7 +280,7 @@ float
 sum_reduce_gold (SV * data_SV)
 	PROTOTYPE: $
 	CODE:
-		float * data = (float*)SvPVX(data_SV);
+		float * data = (float*)sv_2pvbyte_nolen(data_SV);
 		int length = SvCUR(data_SV) / sizeof(float);
 		RETVAL = divide_and_conquer_sum(data, length);
 	OUTPUT:
