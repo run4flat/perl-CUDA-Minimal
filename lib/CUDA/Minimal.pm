@@ -227,8 +227,6 @@ function is really just a wrapper.
 sub MallocFrom ($) {
 	croak('Cannot call MallocFrom in void context') unless defined wantarray;
 	my $dev_ptr = Malloc($_[0]);
-croak("Uninitialized dev ptr") unless $dev_ptr;
-croak("Uninitialized \$_[0]") unless $_[0];
 	Transfer($_[0] => $dev_ptr);
 	return $dev_ptr;
 }
