@@ -1,4 +1,4 @@
-use Test::More tests => 26;
+use Test::More;
 
 # This file starts with z_ to ensure that it runs last.
 
@@ -16,25 +16,47 @@ is($string, 'no error', "With no error, GetLastError should return 'no error'");
 ok(not (ThereAreCudaErrors), 'ThereAreCudaErrors should return false when there are none');
 # Make sure the kernel that's supposed to always succeed does, in fact, succeed:
 CUDA::Minimal::Tests::succeed_test();
-ok(not (ThereAreCudaErrors), 'succeed_test does not set a CUDA error');
+ok(not (ThereAreCudaErrors), 'succeed_test does not set a CUDA error')
+	or diag('succeed_test() failed with: ' . GetLastError);
 
 # Create a collection of values to sum and copy them to the device:
 my $N_elements = 1024;
 my $host_array = pack ('f*', 1..$N_elements);
 my $dev_ptr = MallocFrom($host_array);
+my $test_val = pack 'f', 1;
 
 # Run the multiply kernel; copy back 10 random values and make sure they are
 # what they are supposed to be:
 CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
-my $test_val = pack 'f', 1;
-for (1..10) {
-	my $offset = int rand $N_elements;
-	Transfer(Sizeof(f=>$offset) + $dev_ptr => $test_val);
-	ok(unpack('f', $test_val) == ($offset+1)*4, "Position $offset has value " . ($offset+1)*4);
-}
+ok(not (ThereAreCudaErrors), 'cuda_multiply_by_constant does not cause a CUDA error')
+	or diag('cuda_multiply_by_constant() failed with: ' . GetLastError);
+subtest 'Multiply by four' => sub {
+	plan tests => 10;
+	for (1..10) {
+		my $offset_idx = int rand $N_elements;
+		my $offset_byte = Sizeof(f=>$offset_idx);
+		Transfer($dev_ptr + $offset_byte => $test_val);
+		my $got = unpack('f', $test_val);
+		my $expected = ($offset_idx+1)*4;
+		is($got, $expected, "Position $offset_idx looks right");
+	}
+};
 
 # Return the values to their original state:
 CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 0.25);
+ok(not (ThereAreCudaErrors), 'cuda_multiply_by_constant does not cause a CUDA error')
+	or diag('cuda_multiply_by_constant() failed with: ' . GetLastError);
+subtest 'Restore by multiplying by 0.25' => sub {
+	plan tests => 10;
+	for (1..10) {
+		my $offset_idx = int rand $N_elements;
+		my $offset_byte = Sizeof(f=>$offset_idx);
+		Transfer($dev_ptr + $offset_byte => $test_val);
+		my $got = unpack('f', $test_val);
+		my $expected = $offset_idx+1;
+		is($got, $expected, "Position $offset_idx looks right");
+	}
+};
 
 # Test the sum:
 CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, 'a single block');
@@ -53,6 +75,11 @@ CUDA::Minimal::Tests::sum_reduce_test($host_array, $dev_ptr, '1024,32 block sine
 
 
 
+
+# Re-create a collection of values that we will use for kernel invocation
+# testing after a failed launch
+$host_array = pack ('f*', 1..$N_elements);
+$dev_ptr = MallocFrom($host_array);
 
 # Finish by running the failure test. This, among other things, is supposed to
 # ensure that the documentation regarding the unspecified launch failure (for
@@ -79,10 +106,25 @@ like(GetLastError, qr/unspecified/, "The failing kernel gives an unspecified lau
 # further calls should return false (no errors) until I run another kernel:
 ok(not (ThereAreCudaErrors), "GetLastError clears the last error");
 
-# Check that the next kernel invocation trips an error
-CUDA::Minimal::Tests::succeed_test();
-ok(ThereAreCudaErrors, "Good kernels invoked after a failed kernel launch also fail");
+# Cannot allocate new memory
+my $malloc_succeeds = eval {
+	Free(Malloc(4));
+	fail('Malloc fails after a failed kernel launch');
+	1;
+} or do {
+	pass('Malloc fails after a failed kernel launch');
+	ok(ThereAreCudaErrors, 'cuda reports errors after said malloc');
+	like(GetLastError, qr/unspecified/, 'cuda reports an unspecified launch failure');
+};
 
-# Check the return value of GetLastError:
+# Finally, can we invoke a kernel afterwards?
 CUDA::Minimal::Tests::succeed_test();
-like(GetLastError, qr/unspecified/, 'Further kernel invocations return an unspecified launch failure');
+ok(not(ThereAreCudaErrors), 'succeed_test **succeeds** after a failed kernel?!?!');
+
+# Run the multiply kernel; copy back 10 random values and make sure they are
+# what they are supposed to be:
+CUDA::Minimal::Tests::cuda_multiply_by_constant($dev_ptr, $N_elements, 4);
+ok(ThereAreCudaErrors, 'cuda_multiply_by_constant *does* cause a CUDA error *after* thread launch failure')
+	or diag('cuda_multiply_by_constant() failed with: ' . GetLastError);
+
+done_testing;

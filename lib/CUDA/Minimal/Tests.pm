@@ -107,7 +107,7 @@ sub cuda_sum_reduce {
 		# Make sure any previous calculations have finished, and make sure the
 		# the kernel launch succeeded:
 		ThreadSynchronize;
-		GetLastError;
+		croak(GetLastError) if ThereAreCudaErrors;
 		_cuda_sum_reduce($dev_ptr, $length, $blocksize, $dev_temp);
 		
 		# Set the new length
@@ -118,7 +118,7 @@ sub cuda_sum_reduce {
 		$dev_ptr = $dev_temp;
 	}
 	ThreadSynchronize;
-	GetLastError;
+	croak(GetLastError) if ThereAreCudaErrors;
 	
 	# Clean up and return the final results:
 	Transfer($dev_temp => $result);
@@ -137,7 +137,6 @@ sub cuda_multiply_by_constant {
 	
 	_cuda_multiply_by_constant($dev_ptr, $N_elements, $constant);
 	ThreadSynchronize;
-	GetLastError;
 }
 
 #################
@@ -155,8 +154,8 @@ sub sum_reduce_test {
 	my $Gold_results = sum_reduce_gold($_[0]);
 	# The CUDA calculations perform the sum on the device-allocated data:
 	my $cuda_results = cuda_sum_reduce($dev_ptr, length($_[0]), @N_blocks);
-	Test::More::diag "Gold gave $Gold_results and CUDA gave $cuda_results\n";
 	Test::More::ok(percent_diff($Gold_results, $cuda_results) < 0.01, "Gold and CUDA sums for $description agree");
+	Test::More::note "Gold gave $Gold_results and CUDA gave $cuda_results\n";
 }
 
 1;

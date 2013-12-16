@@ -1285,13 +1285,15 @@ __END__
 =head1 Unspecified launch failure
 
 Normally CUDA's error status is reset to C<cudaSuccess> after calling
-C<cudaGetLastError>, which happens when any of the functions in CUDA::Minimum
+C<cudaGetLastError>, which happens when any of the functions in C<CUDA::Minimal>
 croak, or when you manually call L</GetLastError>. With one exception, later
 checks for CUDA errors should be ok unless B<they> actually had trouble. The
-exception is the C<unspecified launch failure>, which will cause all further
+exception is the C<unspecified launch failure>, which places your CUDA context
+in a non-recoverable state, and will cause all further memory allocations and
 kernel launches to fail with C<unspecified launch failure>. You can still copy
-memory to and from the device, but kernel launches will fail. The only way to
-recover from this problem is to completely close the program.
+memory to and from the device, but nontrivial kernel launches or memory
+allocations should fail. With C<CUDA::Minimal>, the only way to recover from
+this problem is to completely close the program.
 
 The CUDA Toolkit for versions beyond 4.1 provides a function called
 C<cudaDeviceReset>, which lets you reset the device without completely quitting
@@ -1308,6 +1310,12 @@ input validation before invoking kernels. If your kernels only know how to
 process arrays that have lengths that are powers of 2, make sure to indicate
 that in your documentation, and validate the length before actually invoking the
 kernel. If your input to your kernels are good, this should not be a problem.
+
+Note: There is a very confusing and tricky aspect to all of this. Tests in
+F<t/z_kernel_invocations.t> seem to indiate that, at least with v5.5 of the
+CUDA toolkit, trivial kernels that do not access memory will succeed after a
+failed kernel launch! You can't do anything useful with that sort of kernel, of
+course.
 
 =head1 EXPORTS
 
