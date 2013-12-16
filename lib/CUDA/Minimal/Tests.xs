@@ -1,6 +1,7 @@
 #ifdef dNOOP
 	#undef dNOOP
 #endif
+#pragma pack (4)
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
@@ -8,6 +9,7 @@
 // See Tests.pm for the associated copyright and license details.
 
 #include "ppport.h"
+#pragma pack (8)
 
 //////////////////////////////////
 // Preprocessor macro constants //
@@ -245,19 +247,9 @@ _cuda_sum_reduce (SV * dev_data_SV, int length, int N_blocks, SV * dev_intermedi
 
 
 void
-_cuda_multiply_by_constant(SV * dev_data_SV, int length, SV * constant_SV)
+_cuda_multiply_by_constant(SV * dev_data_SV, int length, float constant)
 	PROTOTYPE: $$$
 	CODE:
-		float real_const = atof(SvPV_nolen(constant_SV));
-	/* Debugging shit */
-	printf("The string interpretation of constant_SV is %s; the floating point is %f\n",
-		SvPV_nolen(constant_SV), SvNV_nomg(constant_SV));
-	float constant = (float) SvNV_nomg(constant_SV);
-	double constant_d = SvNV_nomg(constant_SV);
-	printf("  -> when cast to a float, we have %f; to a double, %f\n", constant, constant_d);
-	printf("  -> when directly printed as %%f: %f\n", SvNV(constant_SV));
-	printf("  -> real_constant is %f\n", real_const);
-	sv_dump(constant_SV);
 		// Convert the SV to a float pointer:
 		float * dev_ptr = INT2PTR(float*, SvIV(dev_data_SV));
 		// Determine the grid dimensions so that each thread is only responsible
@@ -273,8 +265,7 @@ _cuda_multiply_by_constant(SV * dev_data_SV, int length, SV * constant_SV)
 		}
 		dim3 dimGrid(x_dim, y_dim, 1);
 		// Launch the kernel:
-		multiply_by_constant_kernel<<<dimGrid, N_threads>>>(dev_ptr, real_const);
-		//multiply_by_constant_kernel<<<dimGrid, N_threads>>>(dev_ptr, constant);
+		multiply_by_constant_kernel<<<dimGrid, N_threads>>>(dev_ptr, constant);
 
 
 # Performs a fatal kernel invocation:
