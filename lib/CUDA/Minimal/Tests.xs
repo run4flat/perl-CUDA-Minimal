@@ -1,14 +1,23 @@
+// See Tests.pm for the associated copyright and license details.
+
 #ifdef dNOOP
 	#undef dNOOP
 #endif
-#pragma pack (4)
+
+/* Make sure we have the correct alignments for the Perl data structures. CUDA
+ * really wants 8 (at the moment) so we only need to check against 4-byte
+ * alignment. */
+#include "config.h"
+#if MEM_ALIGNBYTES==4
+	#pragma pack (4)
+#endif
+
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
-
-// See Tests.pm for the associated copyright and license details.
-
 #include "ppport.h"
+
+/* Reset alignment for CUDA's taste's */
 #pragma pack (8)
 
 //////////////////////////////////
