@@ -1,9 +1,5 @@
 // See Tests.pm for the associated copyright and license details.
 
-#ifdef dNOOP
-	#undef dNOOP
-#endif
-
 /* Make sure we have the correct alignments for the Perl data structures. CUDA
  * really wants 8 (at the moment) so we only need to check against 4-byte
  * alignment. */

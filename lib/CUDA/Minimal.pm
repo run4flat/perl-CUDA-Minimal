@@ -858,6 +858,195 @@ sub ThereAreCudaErrors () {
 require XSLoader;
 XSLoader::load('CUDA::Minimal', $VERSION);
 
+########################
+# WRITING CUDA KERNELS #
+########################
+
+=head1 Writing Your Own Kernels
+
+The focus of this module is on transferring data. In fact, shuttling data to and
+from the video card is I<orthogonal> to processing that data. (That is, the
+implementation of one does not need to know anything about the other to work
+properly.) However, you will need to write code to run on your video card and I
+would be remiss if I did not explain how to write and invoke CUDA kernels from
+your Perl scripts.
+
+I suggest using L<ExtUtils::nvcc> as you prepare your kernels. This module
+assists in configuring the different build tools. I'll give an C<Inline::C>
+example, but the module itself also works with L<Module::Build> and
+L<ExtUtils::MakeMaker> if you decide to turn your CUDA module into a full-blown
+distribution.
+
+A typical CUDA kernel will require two seperate pieces of XS (or Inline::C)
+code: the Perl-to-C kernel invoker and the kernel itself. Shown below is one
+such pair (kernel followed by invoker) that multiplies the contents of the
+device data by a given factor. In this example, the code that distributes
+between blocks and threads is written in the C code, but there's no reason it
+couldn't have been written in a Perl-side wrapper.
+
+Of course, the example isn't much of an example if it doesn't also call the
+CUDA code with Perl. Let's start with the driving Perl code, which allocates
+data, invokes the kernel, and then validates the results. Of course, if you
+write a distribution with CUDA kernels, it would be best to put the validation
+code in the distribution's test suite.
+
+ use strict;
+ use warnings;
+ 
+ use ExtUtils::nvcc;
+ use Inline C => DATA => ExtUtils::nvcc::Inline;
+ 
+ use CUDA::Minimal;
+ 
+ # Allocate memory and initialize data
+ my $N_elements = 1_000_000 + int(rand(1_000_000));
+ my $host_array = pack ('f*', 1..$N_elements);
+ my $dev_ptr = MallocFrom($host_array);
+ 
+ # Multiply our data by a factor of 4
+ cuda_multiply_by($dev_ptr, $N_elements, 4);
+ ThreadSynchronize;
+ 
+ # Copy it back and see how it looks
+ SetSize(my $results, length($host_array));
+ Transfer($dev_ptr => $results);
+ my @results = unpack ('f*', $results);
+ 
+ # Print out a random smattering
+ for (1 .. 10) {
+     my $rand_offset = int(rand($N_elements));
+     my ($got, $expected)
+         = ($results[$rand_offset], ($rand_offset + 1) * 4);
+     print "At offset $rand_offset, ";
+     if ($got == $expected) {
+         print "got what we expected: $expected\n"
+     }
+     else {
+         print "off from $expected by ",
+             $expected - $got, "\n";
+     }
+ }
+ for my $offset (0 .. $N_elements-1) {
+     my ($got, $expected)
+         = ($results[$offset], ($offset + 1) * 4);
+     if ($got != $expected) {
+         print "At offset $offset, ";
+         print "off from $expected by ",
+             $expected - $got, "\n";
+     }
+ }
+ 
+ # All done, cleanup
+ Free($dev_ptr);
+
+Next we have the start of the C<Inline::C> stuff. I begin with the kernel
+definition, since it will be called by name in the kernel invoker. This function
+is very simple. It only determines the offset at which it should do its work,
+and performs the multiplication.
+
+ __END__
+ 
+ __C__
+ 
+ // The kernel
+ __global__ void multiply_by(float * data_g, int N_elems, int factor) {
+     int offset = threadIdx.x
+         + blockIdx.x * blockDim.x
+         + blockIdx.y * (gridDim.x * blockDim.x)
+     ;
+     
+     // Don't reach beyond the allocated data
+     if (offset >= N_elems) return;
+     
+     // Otherwise multiply by the given factor
+     data_g[offset] *= factor;
+ }
+
+I finish with the the kernel invoker, the function that I will be able to call
+directly from Perl. The performs the grid and block calculations and launches
+the CUDA kernel with the tripple-bracket notation of CUDA-C.
+
+ // The Perl-callable kernel invoker
+ void cuda_multiply_by (SV * dev_data_SV, int N_elems, int factor) {
+     // Convert the SV to a float pointer:
+     float * dev_ptr = INT2PTR(float*, SvIV(dev_data_SV));
+     // Determine the grid dimensions so that each thread is only responsible
+     // for a single element.
+     int N_threads = 512;
+     int N_blocks = N_elems / N_threads;
+     if (N_blocks * N_threads < N_elems) N_blocks++;
+     int x_dim = N_blocks;
+     int y_dim = 1;
+     if (N_blocks > 65536) {
+         x_dim = 65536;
+         y_dim = N_blocks / x_dim;
+     }
+     dim3 dimGrid(x_dim, y_dim, 1);
+     // Launch the kernel:
+     multiply_by<<<dimGrid, N_threads>>>(dev_ptr, N_elems, factor);
+ }
+
+=head2 Gotcha: truncated floating point values
+
+If you change the kernel and invoker to use C<float> types instead of C<int>,
+you are likely to get very strange behavior, at least on 32-bit machines. It
+will appear that the floating point factor is zero, regardless of what you
+specified.
+
+The scenario is quite technical, but the solution isn't too hard. You almost
+certainly have hit an alignment issue. The following lines, which typically
+appear at the top of most XS files, need to be changed:
+
+ #include "EXTERN.h"
+ #include "perl.h"
+ #include "XSUB.h"
+ #include "ppport.h"  // not always in XS files
+
+to this:
+
+ // Gaurd against 4-byte alignment
+ #include "config.h"
+ #if MEM_ALIGNBYTES==4
+     #pragma pack (4)
+ #endif
+ 
+ #include "EXTERN.h"
+ #include "perl.h"
+ #include "XSUB.h"
+ #include "ppport.h"  // not always in XS files
+ 
+ #pragma pack (8)
+
+You could simply preface your C<#include> statements with C<#pragma pack (4)>
+and suffix them with C<#pragma pack (8)>, but that might not work on 64-bit
+machines, hence the C<#if>. This will ensure that the struct layout of all the
+basic Perl data structures is consistent between your XS compilation unit and
+your (already) compiled version of Perl, while letting nvcc keep its preferred
+alignment policies throughout the rest of your code.
+
+If you encounter this problem with code using L<Inline::C>, the simple solution
+is to simply add the C<pack> argument to your L<ExtUtils::nvcc::Inline>
+invocation, i.e.
+
+ use Inline C => DATA => ExtUtils::nvcc::Inline('pack');
+
+which is equivalent to:
+
+ use Inline C => DATA => ExtUtils::nvcc::Inline,
+     AUTO_INCLUDE => '#pragma pack (8)',
+     PRE_HEAD => q{
+         #include "config.h"
+         #if MEM_ALIGNBYTES==4
+             #pragma pack (4)
+         #endif
+     };
+
+Having done that, you could change the example code to use a C<float factor>
+instead of C<int factor>, and feed it fractional values as well as integers.
+
+=cut
+
+
 ##############################
 # OBJECT ORIENTED INTERFACES #
 ##############################
