@@ -16,6 +16,12 @@
 /* Reset alignment for CUDA's taste's */
 #pragma pack (8)
 
+#undef dNOOP
+#ifdef __cplusplus
+#define dNOOP (void)0
+#else
+#define dNOOP extern int Perl___notused(void)
+#endif
 //////////////////////////////////
 // Preprocessor macro constants //
 //////////////////////////////////

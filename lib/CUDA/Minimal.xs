@@ -1,8 +1,14 @@
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
-
 #include "ppport.h"
+
+#undef dNOOP
+#ifdef __cplusplus
+#define dNOOP (void)0
+#else
+#define dNOOP extern int Perl___notused(void)
+#endif
 
 MODULE = CUDA::Minimal		PACKAGE = CUDA::Minimal		
 
